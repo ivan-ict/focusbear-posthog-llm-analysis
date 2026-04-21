@@ -1,0 +1,25 @@
+{
+  "count": 2,
+  "results": [
+    {
+      "id": 1001,
+      "distinct_ids": [
+        "user-001"
+      ],
+      "properties": {
+        "name": "Alex Active",
+        "email": "alex@example.com"
+      }
+    },
+    {
+      "id": 1002,
+      "distinct_ids": [
+        "user-002"
+      ],
+      "properties": {
+        "name": "Pat Permission",
+        "email": "pat@example.com"
+      }
+    }
+  ]
+}

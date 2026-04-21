@@ -1,0 +1,122 @@
+{
+  "user-001": [
+    {
+      "id": "evt-001",
+      "event": "user-open-the-app-for-the-first-time",
+      "timestamp": "2026-03-01T08:00:00Z",
+      "properties": {
+        "platform": "android"
+      }
+    },
+    {
+      "id": "evt-002",
+      "event": "junior-bear-wave",
+      "timestamp": "2026-03-01T08:01:00Z",
+      "properties": {
+        "screen": "greeting"
+      }
+    },
+    {
+      "id": "evt-003",
+      "event": "signup-email-success",
+      "timestamp": "2026-03-01T08:02:00Z",
+      "properties": {
+        "method": "email"
+      }
+    },
+    {
+      "id": "evt-004",
+      "event": "onboarding-user-achievement-goal-selected",
+      "timestamp": "2026-03-01T08:03:00Z",
+      "properties": {
+        "goal": "focus"
+      }
+    },
+    {
+      "id": "evt-005",
+      "event": "onboarding-routine-suggestion-created",
+      "timestamp": "2026-03-01T08:04:00Z",
+      "properties": {
+        "suggestion_count": 3
+      }
+    },
+    {
+      "id": "evt-006",
+      "event": "blocking-permission-intro-opened",
+      "timestamp": "2026-03-01T08:05:00Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-007",
+      "event": "grant-overlay-permission",
+      "timestamp": "2026-03-01T08:06:00Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-008",
+      "event": "blocking-schedule-created",
+      "timestamp": "2026-03-01T08:07:00Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-009",
+      "event": "simple-home-screen-opened",
+      "timestamp": "2026-03-01T08:08:00Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-010",
+      "event": "start-focus-mode-manually",
+      "timestamp": "2026-03-01T08:09:00Z",
+      "properties": {}
+    }
+  ],
+  "user-002": [
+    {
+      "id": "evt-101",
+      "event": "user-open-the-app-for-the-first-time",
+      "timestamp": "2026-03-04T10:00:00Z",
+      "properties": {
+        "platform": "android"
+      }
+    },
+    {
+      "id": "evt-102",
+      "event": "junior-bear-wave",
+      "timestamp": "2026-03-04T10:00:20Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-103",
+      "event": "signup-email-success",
+      "timestamp": "2026-03-04T10:01:00Z",
+      "properties": {
+        "method": "email"
+      }
+    },
+    {
+      "id": "evt-104",
+      "event": "healthy-habits-selected",
+      "timestamp": "2026-03-04T10:02:00Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-105",
+      "event": "blocking-permission-intro-opened",
+      "timestamp": "2026-03-04T10:03:00Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-106",
+      "event": "request-overlay-permissions",
+      "timestamp": "2026-03-04T10:03:30Z",
+      "properties": {}
+    },
+    {
+      "id": "evt-107",
+      "event": "request-notification-permissions",
+      "timestamp": "2026-03-04T10:04:00Z",
+      "properties": {}
+    }
+  ]
+}

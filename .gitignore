@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+data/raw/*.json
+data/processed/*.json
+data/outputs/onboarding_analysis.xlsx
