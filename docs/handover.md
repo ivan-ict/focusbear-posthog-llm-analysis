@@ -6,8 +6,9 @@ This document is for the next maintainer of the Focus Bear cohort prototype. Use
 
 ## First-Day Checklist
 
-- Read [README.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/posthog-llm/README.md) for setup and run commands.
-- Read [architecture.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/posthog-llm/docs/architecture.md) to understand the runtime flow.
+- Read [README.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/README.md) for setup and run commands.
+- Read [CHANGELOG.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/CHANGELOG.md) for recent project changes.
+- Read [architecture.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/docs/architecture.md) to understand the runtime flow.
 - Create your own local `.env` from `.env.example`.
 - Verify mock mode first with `POSTHOG_USE_MOCK=true`.
 - Run `.venv/bin/python -m unittest discover`.
@@ -78,7 +79,7 @@ Before a live run, check:
 
 ### Change How Many Users Are Analyzed
 
-Edit `POSTHOG_USER_LIMIT` in `.env`.
+Edit `POSTHOG_USER_LIMIT` in `.env`. The repo default is `100` if the variable is unset.
 
 ### Change the Event Lookback Window
 
@@ -132,7 +133,7 @@ This sequence usually tells you whether the problem happened during:
 ## Recommended Future Improvements
 
 - Add tests for fetch-layer behavior with fixture edge cases.
-- Add a summary worksheet or reporting layer if stakeholders need aggregate counts.
+- Expand the summary worksheet if stakeholders need more aggregate cuts or charts.
 - Add explicit logging instead of plain `print` statements if the prototype becomes longer-lived.
 - Add a sanitized sample workbook or screenshots if new analysts need output examples without running live data.
 - Remove or relocate local credential helper files if the repo is prepared for broader handover.
@@ -140,6 +141,7 @@ This sequence usually tells you whether the problem happened during:
 ## Handover Checklist For The Next Owner
 
 - Confirm `.env.example` still matches `AppConfig`.
+- Update `CHANGELOG.md` whenever output format, defaults, or maintainer-facing behavior changes.
 - Confirm README commands still work with the documented interpreter paths.
 - Confirm the workbook column order and formatting still match analyst expectations.
 - Confirm `docs/architecture.md` still matches the actual pipeline flow.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from clients.openai_client import OpenAIClient
@@ -64,6 +65,7 @@ def _normalize_response(journey: MappedJourney, response: dict[str, Any]) -> Cla
     notes = str(response.get("notes") or "").strip()
     if not notes:
         notes = "No note returned by the model."
+    dropoff_point = normalize_dropoff_point(response.get("dropoff_point"))
 
     return ClassifiedJourney(
         user_id=journey.user_id,
@@ -71,7 +73,7 @@ def _normalize_response(journey: MappedJourney, response: dict[str, Any]) -> Cla
         last_event_at=journey.last_event_at,
         journey_duration=journey.journey_duration,
         category=category,
-        dropoff_point=str(response.get("dropoff_point") or "Unknown").strip() or "Unknown",
+        dropoff_point=dropoff_point,
         error_events=journey.error_events,
         notes=notes,
         activated=activated,
@@ -173,6 +175,30 @@ def _highest_stage_label(stage_flags: dict[str, bool]) -> str:
     """Return the furthest stage reached from the deterministic mapping."""
     reached = [STAGE_LABELS[stage] for stage in STAGE_KEYS if stage_flags.get(stage)]
     return reached[-1] if reached else "Unknown"
+
+
+def normalize_dropoff_point(value: Any) -> str:
+    """Normalize a model dropoff point to a canonical stage label."""
+    text = str(value or "").strip()
+    if not text:
+        return "Unknown"
+
+    normalized = _normalize_dropoff_key(text)
+    if normalized == "unknown":
+        return "Unknown"
+
+    for stage in STAGE_KEYS:
+        stage_label = STAGE_LABELS[stage]
+        if normalized in {_normalize_dropoff_key(stage), _normalize_dropoff_key(stage_label)}:
+            return stage_label
+
+    return "Unknown"
+
+
+def _normalize_dropoff_key(value: str) -> str:
+    """Return a stable comparison key for dropoff point variants."""
+    collapsed = re.sub(r"[_\-\s]+", " ", value.strip().lower())
+    return collapsed.strip()
 
 
 def _yes_no(value: bool) -> str:

@@ -8,7 +8,7 @@ This project analyzes Focus Bear mobile onboarding journeys for a PostHog cohort
 - fetches and sorts each user’s event timeline
 - derives deterministic rule hints such as stages reached, permission events, and backend error events
 - sends a structured per-user payload to OpenAI for classification
-- exports a single-sheet workbook at `data/outputs/onboarding_analysis.xlsx`
+- exports a workbook at `data/outputs/onboarding_analysis.xlsx` with detail and summary sheets
 
 The pipeline is a local prototype. It is designed for analyst review and comparison with manual onboarding analysis, not for production deployment.
 
@@ -24,6 +24,7 @@ The pipeline is a local prototype. It is designed for analyst review and compari
 - `pipeline/classify_users.py`: normalizes model output and fallback classification
 - `pipeline/export_results.py`: writes the formatted Excel workbook
 - `test_workbook_export.py`: regression tests for classification propagation and workbook output
+- `CHANGELOG.md`: project change history
 - `docs/architecture.md`: architecture and data-flow reference
 - `docs/handover.md`: maintainer onboarding and handover notes
 
@@ -55,7 +56,7 @@ cp .env.example .env
 - `POSTHOG_BASE_URL`: PostHog host, default `https://us.posthog.com`
 - `POSTHOG_PROJECT_ID`: PostHog project ID
 - `POSTHOG_COHORT_ID`: target cohort ID
-- `POSTHOG_USER_LIMIT`: maximum users to analyze in one run
+- `POSTHOG_USER_LIMIT`: maximum users to analyze in one run, default `100`
 - `POSTHOG_EVENTS_LOOKBACK_DAYS`: event lookback window for live mode
 - `POSTHOG_USE_MOCK`: `true` for fixtures, `false` for live APIs
 - `OUTPUT_XLSX_PATH`: output workbook path
@@ -105,9 +106,11 @@ Live mode also calls OpenAI for each analyzed user, so it depends on working net
 
 The workbook currently:
 
-- writes a single worksheet named `Onboarding Analysis`
+- writes a detail worksheet named `Onboarding Analysis`
+- writes a summary worksheet named `Summary`
 - displays `First App Opened At` and `Last Event At` in Australia/Melbourne time using `DD/MM/YYYY HH:mm`
 - includes a dedicated `Error Events` column for backend-issue rows
+- normalizes `Dropoff Point` values to consistent stage labels before export
 - uses a dark header, alternating row striping, category highlighting, and red/green YES/NO status cells
 
 ## Test
@@ -120,9 +123,11 @@ Run the current regression suite with:
 
 The existing tests cover:
 
+- config defaulting `POSTHOG_USER_LIMIT` to `100`
 - classification propagation of `error_events`
 - fallback classification behavior
-- workbook headers, formatting, colors, and localized datetime export
+- dropoff point normalization across label variants
+- workbook headers, formatting, colors, localized datetime export, and summary-sheet output
 
 ## Troubleshooting
 
@@ -134,5 +139,6 @@ The existing tests cover:
 
 ## Additional Docs
 
-- [Architecture Notes](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/posthog-llm/docs/architecture.md) with Mermaid system-flow and artifact-flow diagrams
-- [Handover Guide](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/posthog-llm/docs/handover.md)
+- [Changelog](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/CHANGELOG.md)
+- [Architecture Notes](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/docs/architecture.md) with Mermaid system-flow and artifact-flow diagrams
+- [Handover Guide](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/docs/handover.md)

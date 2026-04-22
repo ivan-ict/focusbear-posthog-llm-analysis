@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
-from pipeline.classify_users import ClassifiedJourney
+from pipeline.classify_users import ClassifiedJourney, normalize_dropoff_point
+from prompts import ALLOWED_CATEGORIES
 
 
 OUTPUT_COLUMNS = [
@@ -78,6 +80,7 @@ CENTER_ALIGNMENT = Alignment(horizontal="center", vertical="center")
 WRAP_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
 MAX_COLUMN_WIDTH = 40
 MIN_TEXT_COLUMN_WIDTH = 24
+SUMMARY_SHEET_TITLE = "Summary"
 
 
 def export_results(rows: list[ClassifiedJourney], output_path: Path) -> Path:
@@ -110,6 +113,7 @@ def export_results(rows: list[ClassifiedJourney], output_path: Path) -> Path:
 
     worksheet.auto_filter.ref = worksheet.dimensions
     _autosize_columns(worksheet)
+    _build_summary_sheet(workbook, rows)
     workbook.save(output_path)
     return output_path
 
@@ -117,13 +121,14 @@ def export_results(rows: list[ClassifiedJourney], output_path: Path) -> Path:
 def _build_row_values(row: ClassifiedJourney) -> list[Any]:
     """Return export values in the workbook column order."""
     error_events = ", ".join(row.error_events) if row.category == "Backend issue" else ""
+    dropoff_point = normalize_dropoff_point(row.dropoff_point)
     return [
         row.user_id,
         _format_excel_datetime_value(row.first_app_opened_at),
         _format_excel_datetime_value(row.last_event_at),
         row.journey_duration,
         row.category,
-        row.dropoff_point,
+        dropoff_point,
         error_events,
         row.notes,
         row.pre_onboarding,
@@ -140,6 +145,121 @@ def _build_row_values(row: ClassifiedJourney) -> list[Any]:
         row.home_screen,
         row.raw_event_count,
     ]
+
+
+def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney]) -> None:
+    """Write a deterministic summary sheet for stakeholder review."""
+    worksheet = workbook.create_sheet(SUMMARY_SHEET_TITLE)
+
+    _append_section_header(worksheet, ["Metric", "Value"])
+    onboarding_completed = sum(1 for row in rows if row.onboarding_complete == "YES")
+    worksheet.append(["Total Users Analyzed", len(rows)])
+    worksheet.append(["Onboarding Completed", onboarding_completed])
+    worksheet.append(["Onboarding Completed %", _format_percentage(onboarding_completed, len(rows))])
+
+    worksheet.append([])
+    _append_section_header(worksheet, ["Category", "Count", "Percent"])
+    category_counts = Counter(row.category for row in rows)
+    for category in ALLOWED_CATEGORIES:
+        count = category_counts.get(category, 0)
+        worksheet.append([category, count, _format_percentage(count, len(rows))])
+
+    worksheet.append([])
+    _append_section_header(worksheet, ["Top Dropoff Point", "Count"])
+    for label, count in _ranked_dropoff_counts(rows):
+        worksheet.append([label, count])
+
+    worksheet.append([])
+    _append_section_header(worksheet, ["Top Backend Error Event", "Count"])
+    for event_name, count in _ranked_backend_error_counts(rows):
+        worksheet.append([event_name, count])
+
+    worksheet.append([])
+    _append_section_header(worksheet, ["Key Finding"])
+    for finding in _build_key_findings(rows, category_counts):
+        worksheet.append([finding])
+
+    _autosize_columns(worksheet)
+
+
+def _append_section_header(worksheet: Worksheet, values: list[str]) -> None:
+    """Append and style a summary section header row."""
+    worksheet.append(values)
+    row_index = worksheet.max_row
+    for cell in worksheet[row_index]:
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER_ALIGNMENT if len(values) > 1 else WRAP_ALIGNMENT
+
+
+def _ranked_dropoff_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
+    """Return dropoff counts sorted by frequency, excluding unknown values."""
+    counts = Counter(normalize_dropoff_point(row.dropoff_point) for row in rows)
+    counts.pop("Unknown", None)
+    if not counts:
+        return [("None", 0)]
+    return counts.most_common()
+
+
+def _ranked_backend_error_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
+    """Return backend error event counts ranked by frequency."""
+    counts: Counter[str] = Counter()
+    for row in rows:
+        if row.category != "Backend issue":
+            continue
+        for error_event in row.error_events:
+            counts[error_event] += 1
+
+    if not counts:
+        return [("None", 0)]
+    return counts.most_common()
+
+
+def _build_key_findings(
+    rows: list[ClassifiedJourney],
+    category_counts: Counter[str],
+) -> list[str]:
+    """Return short deterministic headline findings from the workbook rows."""
+    total_rows = len(rows)
+    if total_rows == 0:
+        return ["No users were analyzed."]
+
+    findings: list[str] = []
+
+    top_category, top_category_count = max(
+        ((category, category_counts.get(category, 0)) for category in ALLOWED_CATEGORIES),
+        key=lambda item: (item[1], item[0]),
+    )
+    findings.append(
+        f"Largest category: {top_category} ({top_category_count}/{total_rows}, "
+        f"{_format_percentage(top_category_count, total_rows)})."
+    )
+
+    top_dropoff, top_dropoff_count = _ranked_dropoff_counts(rows)[0]
+    if top_dropoff != "None":
+        findings.append(f"Most common dropoff point: {top_dropoff} ({top_dropoff_count} users).")
+    else:
+        findings.append("No dropoff point could be determined from the analyzed users.")
+
+    top_error_event, top_error_count = _ranked_backend_error_counts(rows)[0]
+    if top_error_event != "None":
+        findings.append(f"Most common backend error: {top_error_event} ({top_error_count} occurrences).")
+    else:
+        findings.append("No backend error events were recorded in backend-issue rows.")
+
+    onboarding_completed = sum(1 for row in rows if row.onboarding_complete == "YES")
+    findings.append(
+        f"Onboarding completion rate: {_format_percentage(onboarding_completed, total_rows)} "
+        f"({onboarding_completed}/{total_rows})."
+    )
+    return findings
+
+
+def _format_percentage(count: int, total: int) -> str:
+    """Return a stable percentage string for summary output."""
+    if total <= 0:
+        return "0.0%"
+    return f"{(count / total) * 100:.1f}%"
 
 
 def _format_excel_datetime_value(value: str) -> datetime | str:

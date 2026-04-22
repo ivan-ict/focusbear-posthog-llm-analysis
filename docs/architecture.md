@@ -187,9 +187,11 @@ The fallback classifier promotes:
 Current workbook behavior:
 
 - output file is `.xlsx`
-- worksheet name is `Onboarding Analysis`
+- detail worksheet name is `Onboarding Analysis`
+- summary worksheet name is `Summary`
 - timestamps are converted to Australia/Melbourne display values at export time
 - workbook includes a dedicated `Error Events` column
+- dropoff points are normalized to canonical stage labels before export and summary counting
 - header, striping, category colors, and YES/NO status coloring are applied
 
 The exporter is presentation-focused. Internal timestamp storage remains ISO strings until export.

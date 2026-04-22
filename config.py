@@ -61,7 +61,7 @@ class AppConfig:
             posthog_base_url=os.getenv("POSTHOG_BASE_URL", "https://us.posthog.com").strip().rstrip("/"),
             posthog_project_id=os.getenv("POSTHOG_PROJECT_ID", "14246").strip(),
             posthog_cohort_id=os.getenv("POSTHOG_COHORT_ID", "239235").strip(),
-            posthog_user_limit=int(os.getenv("POSTHOG_USER_LIMIT", "20")),
+            posthog_user_limit=int(os.getenv("POSTHOG_USER_LIMIT", "100")),
             posthog_events_lookback_days=int(os.getenv("POSTHOG_EVENTS_LOOKBACK_DAYS", "90")),
             posthog_use_mock=_parse_bool(os.getenv("POSTHOG_USE_MOCK"), default=True),
             output_xlsx_path=output_path,
