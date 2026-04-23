@@ -116,6 +116,10 @@ ERROR_EVENTS = {
     "signup-error",
     "authentication-error",
 }
+POSTHOG_PARITY_ERROR_EVENTS = {
+    "backend-errored-out",
+    "network-error",
+}
 
 PERMISSION_PATTERNS = [
     "request-overlay-permissions",
@@ -127,6 +131,7 @@ PERMISSION_PATTERNS = [
 ]
 
 ERROR_ENDPOINT_PROPERTY = "endpoint_url"
+ERROR_STATUS_CODE_PROPERTY = "status_code"
 BLOCKING_SCHEDULE_STAGE_RANKS = {
     "not_reached": 0,
     "opened": 1,
@@ -159,9 +164,11 @@ class MappedJourney:
     activation_detected: bool
     error_events: list[str]
     error_endpoint_urls: list[str]
+    error_status_codes: list[str]
     permission_events: list[str]
     blocking_schedule_highest_stage: str
     last_blocking_schedule_event: str
+    error_event_occurrences: list[dict[str, Any]]
     top_event_counts: list[dict[str, Any]]
     timeline_excerpt: list[dict[str, Any]]
     llm_payload: dict[str, Any]
@@ -207,11 +214,13 @@ def _map_single_timeline(timeline: UserTimeline) -> MappedJourney:
 
     error_events = sorted({name for name in event_names if name in ERROR_EVENTS})
     error_endpoint_urls = _error_endpoint_urls(timeline.events)
+    error_status_codes = _error_status_codes(timeline.events)
     permission_events = sorted(
         {name for name in event_names if any(_matches_pattern(name, pattern) for pattern in PERMISSION_PATTERNS)}
     )
     blocking_schedule_highest_stage = _blocking_schedule_highest_stage(timeline.events)
     last_blocking_schedule_event = _last_blocking_schedule_event(timeline.events)
+    error_event_occurrences = _error_event_occurrences(timeline.events)
 
     event_counter = Counter(event_names)
     top_event_counts = [
@@ -234,9 +243,11 @@ def _map_single_timeline(timeline: UserTimeline) -> MappedJourney:
             "activation_detected": activation_detected,
             "error_events": error_events,
             "error_endpoint_urls": error_endpoint_urls,
+            "error_status_codes": error_status_codes,
             "permission_events": permission_events,
             "blocking_schedule_highest_stage": blocking_schedule_highest_stage,
             "last_blocking_schedule_event": last_blocking_schedule_event,
+            "error_event_occurrences": error_event_occurrences,
             "raw_event_count": len(timeline.events),
         },
         "event_name_counts": top_event_counts,
@@ -255,9 +266,11 @@ def _map_single_timeline(timeline: UserTimeline) -> MappedJourney:
         activation_detected=activation_detected,
         error_events=error_events,
         error_endpoint_urls=error_endpoint_urls,
+        error_status_codes=error_status_codes,
         permission_events=permission_events,
         blocking_schedule_highest_stage=blocking_schedule_highest_stage,
         last_blocking_schedule_event=last_blocking_schedule_event,
+        error_event_occurrences=error_event_occurrences,
         top_event_counts=top_event_counts,
         timeline_excerpt=_timeline_excerpt(timeline.events),
         llm_payload=llm_payload,
@@ -292,7 +305,7 @@ def _error_endpoint_urls(events: list[dict[str, Any]]) -> list[str]:
     seen: set[str] = set()
     for event in events:
         event_name = _event_name(event)
-        if event_name not in {"backend-errored-out", "network-error"}:
+        if event_name not in POSTHOG_PARITY_ERROR_EVENTS:
             continue
         properties = event.get("properties") or {}
         endpoint_url = str(properties.get(ERROR_ENDPOINT_PROPERTY) or "").strip()
@@ -301,6 +314,47 @@ def _error_endpoint_urls(events: list[dict[str, Any]]) -> list[str]:
         seen.add(endpoint_url)
         urls.append(endpoint_url)
     return urls
+
+
+def _error_status_codes(events: list[dict[str, Any]]) -> list[str]:
+    """Return stable unique non-empty status codes attached to error events."""
+    status_codes: list[str] = []
+    seen: set[str] = set()
+    for event in events:
+        event_name = _event_name(event)
+        if event_name not in POSTHOG_PARITY_ERROR_EVENTS:
+            continue
+        properties = event.get("properties") or {}
+        status_code = str(properties.get(ERROR_STATUS_CODE_PROPERTY) or "").strip()
+        if not status_code or status_code in seen:
+            continue
+        seen.add(status_code)
+        status_codes.append(status_code)
+    return status_codes
+
+
+def _error_event_occurrences(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return per-user error-event counts for PostHog-style parity reporting."""
+    counts: Counter[tuple[str, str, str]] = Counter()
+    for event in events:
+        event_name = _event_name(event)
+        if event_name not in POSTHOG_PARITY_ERROR_EVENTS:
+            continue
+        properties = event.get("properties") or {}
+        endpoint_url = str(properties.get(ERROR_ENDPOINT_PROPERTY) or "").strip()
+        status_code = str(properties.get(ERROR_STATUS_CODE_PROPERTY) or "").strip()
+        counts[(event_name, endpoint_url, status_code)] += 1
+
+    return [
+        {
+            "event": event_name,
+            "endpoint_url": endpoint_url,
+            "status_code": status_code,
+            "count": count,
+        }
+        for event_name, endpoint_url, status_code in sorted(counts.keys())
+        for count in [counts[(event_name, endpoint_url, status_code)]]
+    ]
 
 
 def _blocking_schedule_highest_stage(events: list[dict[str, Any]]) -> str:

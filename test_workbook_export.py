@@ -41,7 +41,16 @@ class ClassificationTests(unittest.TestCase):
         journey = _build_mapped_journey(
             error_events=["backend-errored-out", "network-error"],
             error_endpoint_urls=["https://api.focusbear.io/events"],
+            error_status_codes=["403"],
             blocking_schedule_highest_stage="saved",
+            error_event_occurrences=[
+                {
+                    "event": "backend-errored-out",
+                    "endpoint_url": "https://api.focusbear.io/events",
+                    "status_code": "403",
+                    "count": 2,
+                }
+            ],
         )
 
         result = _normalize_response(
@@ -68,14 +77,25 @@ class ClassificationTests(unittest.TestCase):
 
         self.assertEqual(result.error_events, ["backend-errored-out", "network-error"])
         self.assertEqual(result.error_endpoint_urls, ["https://api.focusbear.io/events"])
+        self.assertEqual(result.error_status_codes, ["403"])
         self.assertEqual(result.blocking_schedule_highest_stage, "saved")
+        self.assertEqual(len(result.error_event_occurrences), 1)
 
     def test_fallback_classification_preserves_error_events(self) -> None:
         journey = _build_mapped_journey(
             error_events=["signin-error"],
             error_endpoint_urls=["https://api.focusbear.io/device"],
+            error_status_codes=["400"],
             permission_events=["request-overlay-permissions"],
             blocking_schedule_highest_stage="configured",
+            error_event_occurrences=[
+                {
+                    "event": "backend-errored-out",
+                    "endpoint_url": "https://api.focusbear.io/device",
+                    "status_code": "400",
+                    "count": 1,
+                }
+            ],
         )
 
         result = _fallback_classification(journey, "OpenAI unavailable")
@@ -83,7 +103,9 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(result.category, "Backend issue")
         self.assertEqual(result.error_events, ["signin-error"])
         self.assertEqual(result.error_endpoint_urls, ["https://api.focusbear.io/device"])
+        self.assertEqual(result.error_status_codes, ["400"])
         self.assertEqual(result.blocking_schedule_highest_stage, "configured")
+        self.assertEqual(len(result.error_event_occurrences), 1)
 
     def test_normalize_dropoff_point_collapses_stage_variants(self) -> None:
         self.assertEqual(normalize_dropoff_point("set_up_blocking_schedule"), "Set Up Blocking Schedule")
@@ -105,7 +127,22 @@ class ExportResultsTests(unittest.TestCase):
                     "https://api.focusbear.io/events",
                     "https://api.focusbear.io/blocking-schedules",
                 ],
+                error_status_codes=["403", "413"],
                 blocking_schedule_highest_stage="saved",
+                error_event_occurrences=[
+                    {
+                        "event": "backend-errored-out",
+                        "endpoint_url": "https://api.focusbear.io/events",
+                        "status_code": "403",
+                        "count": 2,
+                    },
+                    {
+                        "event": "network-error",
+                        "endpoint_url": "https://api.focusbear.io/blocking-schedules",
+                        "status_code": "",
+                        "count": 1,
+                    },
+                ],
                 notes="Two backend errors observed during onboarding.",
                 pre_onboarding="YES",
                 sign_up="YES",
@@ -118,7 +155,16 @@ class ExportResultsTests(unittest.TestCase):
                 category="Permission issue",
                 error_events=["backend-errored-out"],
                 error_endpoint_urls=["https://api.focusbear.io/events"],
+                error_status_codes=["400"],
                 blocking_schedule_highest_stage="configured",
+                error_event_occurrences=[
+                    {
+                        "event": "backend-errored-out",
+                        "endpoint_url": "https://api.focusbear.io/events",
+                        "status_code": "400",
+                        "count": 1,
+                    }
+                ],
                 notes="Permission prompt shown repeatedly.",
                 dropoff_point="Set Up Blocking Schedule",
                 onboarding_complete="YES",
@@ -130,7 +176,9 @@ class ExportResultsTests(unittest.TestCase):
                 category="Early drop",
                 error_events=[],
                 error_endpoint_urls=[],
+                error_status_codes=[],
                 blocking_schedule_highest_stage="not_reached",
+                error_event_occurrences=[],
                 notes="User stopped before routine generation.",
                 dropoff_point="Routine Generated",
             ),
@@ -155,6 +203,7 @@ class ExportResultsTests(unittest.TestCase):
                     "Dropoff Point",
                     "Error Events",
                     "Error Endpoint URLs",
+                    "Error Status Codes",
                     "Blocking Schedule Highest Stage",
                     "Notes",
                     "Pre Onboarding",
@@ -174,7 +223,7 @@ class ExportResultsTests(unittest.TestCase):
             )
             self.assertEqual(workbook.sheetnames, ["Onboarding Analysis", "Summary"])
             self.assertEqual(worksheet.freeze_panes, "A2")
-            self.assertEqual(worksheet.auto_filter.ref, "A1:W4")
+            self.assertEqual(worksheet.auto_filter.ref, "A1:X4")
 
             self.assertEqual(worksheet["B2"].value, datetime(2026, 6, 1, 10, 15))
             self.assertEqual(worksheet["C2"].value, datetime(2026, 6, 1, 13, 45))
@@ -191,23 +240,25 @@ class ExportResultsTests(unittest.TestCase):
                 "https://api.focusbear.io/events, https://api.focusbear.io/blocking-schedules",
             )
             self.assertEqual(worksheet["H3"].value, "https://api.focusbear.io/events")
-            self.assertEqual(worksheet["I2"].value, "saved")
-            self.assertEqual(worksheet["I3"].value, "configured")
+            self.assertEqual(worksheet["I2"].value, "403, 413")
+            self.assertEqual(worksheet["I3"].value, "400")
+            self.assertEqual(worksheet["J2"].value, "saved")
+            self.assertEqual(worksheet["J3"].value, "configured")
 
             self.assertTrue(worksheet["G2"].alignment.wrap_text)
             self.assertTrue(worksheet["H2"].alignment.wrap_text)
             self.assertTrue(worksheet["I2"].alignment.wrap_text)
             self.assertTrue(worksheet["J2"].alignment.wrap_text)
             self.assertEqual(worksheet["G2"].alignment.vertical, "top")
-            self.assertEqual(worksheet["K2"].alignment.horizontal, "center")
+            self.assertEqual(worksheet["L2"].alignment.horizontal, "center")
 
             self.assertTrue(_rgb(worksheet["A1"]).endswith("1F2937"))
             self.assertTrue(_rgb(worksheet["A2"]).endswith("F7F7F7"))
             self.assertFalse(_rgb(worksheet["A3"]).endswith("F7F7F7"))
             self.assertTrue(_rgb(worksheet["E2"]).endswith("F4CCCC"))
             self.assertTrue(_rgb(worksheet["E3"]).endswith("FFD966"))
-            self.assertTrue(_rgb(worksheet["K2"]).endswith("C6EFCE"))
-            self.assertTrue(_rgb(worksheet["L2"]).endswith("FFC7CE"))
+            self.assertTrue(_rgb(worksheet["L2"]).endswith("C6EFCE"))
+            self.assertTrue(_rgb(worksheet["M2"]).endswith("FFC7CE"))
 
             self.assertEqual(summary_sheet["A1"].value, "Metric")
             self.assertEqual(summary_sheet["B2"].value, 3)
@@ -215,17 +266,25 @@ class ExportResultsTests(unittest.TestCase):
             self.assertEqual(summary_sheet["B4"].value, "33.3%")
 
             summary_rows = list(summary_sheet.iter_rows(values_only=True))
-            self.assertIn(("Backend issue", 1, "33.3%"), summary_rows)
-            self.assertIn(("Permission issue", 1, "33.3%"), summary_rows)
-            self.assertIn(("Early drop", 1, "33.3%"), summary_rows)
-            self.assertIn(("Set Up Blocking Schedule", 2, None), summary_rows)
-            self.assertIn(("Routine Generated", 1, None), summary_rows)
-            self.assertIn(("backend-errored-out", 1, None), summary_rows)
-            self.assertIn(("network-error", 1, None), summary_rows)
-            self.assertIn(("https://api.focusbear.io/events", 2, "66.7%"), summary_rows)
-            self.assertIn(("https://api.focusbear.io/blocking-schedules", 1, "33.3%"), summary_rows)
-            self.assertIn(("saved", 1, "33.3%"), summary_rows)
-            self.assertIn(("configured", 1, "33.3%"), summary_rows)
+            self.assertIn(("Backend issue", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("Permission issue", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("Early drop", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("Set Up Blocking Schedule", 2, None, None, None), summary_rows)
+            self.assertIn(("Routine Generated", 1, None, None, None), summary_rows)
+            self.assertIn(("backend-errored-out", 1, None, None, None), summary_rows)
+            self.assertIn(("network-error", 1, None, None, None), summary_rows)
+            self.assertIn(("https://api.focusbear.io/events", 2, "66.7%", None, None), summary_rows)
+            self.assertIn(("https://api.focusbear.io/blocking-schedules", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("403", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("413", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("400", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("saved", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("configured", 1, "33.3%", None, None), summary_rows)
+            self.assertIn(("backend-errored-out", "https://api.focusbear.io/events", "403", 2, 1), summary_rows)
+            self.assertIn(
+                ("network-error", "https://api.focusbear.io/blocking-schedules", "(missing)", 1, 1),
+                summary_rows,
+            )
 
             findings = [row[0] for row in summary_rows if row and isinstance(row[0], str)]
             self.assertIn("Largest category: Permission issue (1/3, 33.3%).", findings)
@@ -250,11 +309,13 @@ class MappingTests(unittest.TestCase):
                     "backend-errored-out",
                     "2026-06-01T00:02:00+00:00",
                     endpoint_url="https://api.focusbear.io/blocking-schedules",
+                    status_code="403",
                 ),
                 _event(
                     "backend-errored-out",
                     "2026-06-01T00:03:00+00:00",
                     endpoint_url="https://api.focusbear.io/events",
+                    status_code="413",
                 ),
                 _event(
                     "backend-timed-out",
@@ -272,6 +333,30 @@ class MappingTests(unittest.TestCase):
             [
                 "https://api.focusbear.io/events",
                 "https://api.focusbear.io/blocking-schedules",
+            ],
+        )
+        self.assertEqual(journey.error_status_codes, ["403", "413"])
+        self.assertEqual(
+            journey.error_event_occurrences,
+            [
+                {
+                    "event": "backend-errored-out",
+                    "endpoint_url": "https://api.focusbear.io/blocking-schedules",
+                    "status_code": "403",
+                    "count": 1,
+                },
+                {
+                    "event": "backend-errored-out",
+                    "endpoint_url": "https://api.focusbear.io/events",
+                    "status_code": "413",
+                    "count": 1,
+                },
+                {
+                    "event": "network-error",
+                    "endpoint_url": "https://api.focusbear.io/events",
+                    "status_code": "",
+                    "count": 1,
+                },
             ],
         )
 
@@ -328,8 +413,10 @@ def _build_mapped_journey(
     *,
     error_events: list[str] | None = None,
     error_endpoint_urls: list[str] | None = None,
+    error_status_codes: list[str] | None = None,
     permission_events: list[str] | None = None,
     blocking_schedule_highest_stage: str = "not_reached",
+    error_event_occurrences: list[dict[str, object]] | None = None,
 ) -> MappedJourney:
     """Create a compact mapped journey fixture."""
     stage_flags = {
@@ -357,9 +444,11 @@ def _build_mapped_journey(
         activation_detected=False,
         error_events=error_events or [],
         error_endpoint_urls=error_endpoint_urls or [],
+        error_status_codes=error_status_codes or [],
         permission_events=permission_events or [],
         blocking_schedule_highest_stage=blocking_schedule_highest_stage,
         last_blocking_schedule_event="",
+        error_event_occurrences=error_event_occurrences or [],
         top_event_counts=[],
         timeline_excerpt=[],
         llm_payload={},
@@ -374,7 +463,9 @@ def _build_classified_journey(
     category: str,
     error_events: list[str],
     error_endpoint_urls: list[str],
+    error_status_codes: list[str],
     blocking_schedule_highest_stage: str,
+    error_event_occurrences: list[dict[str, object]],
     notes: str,
     dropoff_point: str = "Routine Generated",
     onboarding_complete: str = "NO",
@@ -391,7 +482,9 @@ def _build_classified_journey(
         dropoff_point=dropoff_point,
         error_events=error_events,
         error_endpoint_urls=error_endpoint_urls,
+        error_status_codes=error_status_codes,
         blocking_schedule_highest_stage=blocking_schedule_highest_stage,
+        error_event_occurrences=error_event_occurrences,
         notes=notes,
         activated=False,
         pre_onboarding=pre_onboarding,

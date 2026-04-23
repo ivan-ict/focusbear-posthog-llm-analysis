@@ -25,6 +25,7 @@ OUTPUT_COLUMNS = [
     "Dropoff Point",
     "Error Events",
     "Error Endpoint URLs",
+    "Error Status Codes",
     "Blocking Schedule Highest Stage",
     "Notes",
     "Pre Onboarding",
@@ -60,12 +61,14 @@ STATUS_COLUMNS = {
 CATEGORY_COLUMN = "Category"
 ERROR_EVENTS_COLUMN = "Error Events"
 ERROR_ENDPOINT_URLS_COLUMN = "Error Endpoint URLs"
+ERROR_STATUS_CODES_COLUMN = "Error Status Codes"
 BLOCKING_SCHEDULE_HIGHEST_STAGE_COLUMN = "Blocking Schedule Highest Stage"
 NOTES_COLUMN = "Notes"
 DATE_COLUMNS = {"First App Opened At", "Last Event At"}
 WRAP_TEXT_COLUMNS = {
     ERROR_EVENTS_COLUMN,
     ERROR_ENDPOINT_URLS_COLUMN,
+    ERROR_STATUS_CODES_COLUMN,
     BLOCKING_SCHEDULE_HIGHEST_STAGE_COLUMN,
     NOTES_COLUMN,
 }
@@ -131,6 +134,7 @@ def _build_row_values(row: ClassifiedJourney) -> list[Any]:
     """Return export values in the workbook column order."""
     error_events = ", ".join(row.error_events) if row.category == "Backend issue" else ""
     error_endpoint_urls = ", ".join(row.error_endpoint_urls)
+    error_status_codes = ", ".join(row.error_status_codes)
     dropoff_point = normalize_dropoff_point(row.dropoff_point)
     return [
         row.user_id,
@@ -141,6 +145,7 @@ def _build_row_values(row: ClassifiedJourney) -> list[Any]:
         dropoff_point,
         error_events,
         error_endpoint_urls,
+        error_status_codes,
         row.blocking_schedule_highest_stage,
         row.notes,
         row.pre_onboarding,
@@ -192,9 +197,21 @@ def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney]) -> N
         worksheet.append([endpoint_url, count, _format_percentage(count, len(rows))])
 
     worksheet.append([])
+    _append_section_header(worksheet, ["Error Status Code", "Affected Users", "Percent"])
+    for status_code, count in _ranked_error_status_code_user_counts(rows):
+        worksheet.append([status_code, count, _format_percentage(count, len(rows))])
+
+    worksheet.append([])
     _append_section_header(worksheet, ["Blocking Schedule Deepest Stage", "Count", "Percent"])
     for stage_name, count in _ranked_blocking_schedule_highest_stage_counts(rows):
         worksheet.append([stage_name, count, _format_percentage(count, len(rows))])
+
+    worksheet.append([])
+    _append_section_header(worksheet, ["PostHog Insight Parity"])
+    worksheet.append(["Event", "Endpoint URL", "Status Code", "Raw Events", "Affected Users"])
+    _style_summary_subheader_row(worksheet)
+    for event_name, endpoint_url, status_code, raw_events, affected_users in _ranked_posthog_parity_rows(rows):
+        worksheet.append([event_name, endpoint_url, status_code, raw_events, affected_users])
 
     worksheet.append([])
     _append_section_header(worksheet, ["Key Finding"])
@@ -212,6 +229,15 @@ def _append_section_header(worksheet: Worksheet, values: list[str]) -> None:
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
         cell.alignment = CENTER_ALIGNMENT if len(values) > 1 else WRAP_ALIGNMENT
+
+
+def _style_summary_subheader_row(worksheet: Worksheet) -> None:
+    """Style the row immediately appended after a single-cell section header."""
+    row_index = worksheet.max_row
+    for cell in worksheet[row_index]:
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER_ALIGNMENT
 
 
 def _ranked_dropoff_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
@@ -249,6 +275,18 @@ def _ranked_error_endpoint_user_counts(rows: list[ClassifiedJourney]) -> list[tu
     return counts.most_common()
 
 
+def _ranked_error_status_code_user_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
+    """Return error status-code counts ranked by affected users."""
+    counts: Counter[str] = Counter()
+    for row in rows:
+        for status_code in row.error_status_codes:
+            counts[status_code] += 1
+
+    if not counts:
+        return [("None", 0)]
+    return counts.most_common()
+
+
 def _ranked_blocking_schedule_highest_stage_counts(
     rows: list[ClassifiedJourney],
 ) -> list[tuple[str, int]]:
@@ -258,6 +296,44 @@ def _ranked_blocking_schedule_highest_stage_counts(
     if not counts:
         return [("None", 0)]
     return counts.most_common()
+
+
+def _ranked_posthog_parity_rows(
+    rows: list[ClassifiedJourney],
+) -> list[tuple[str, str, str, int, int]]:
+    """Return raw error-event rows for parity checks against PostHog insights."""
+    raw_counts: Counter[tuple[str, str, str]] = Counter()
+    affected_users: dict[tuple[str, str, str], set[str]] = {}
+    for row in rows:
+        for occurrence in row.error_event_occurrences:
+            key = (
+                str(occurrence.get("event") or "").strip(),
+                str(occurrence.get("endpoint_url") or "").strip(),
+                str(occurrence.get("status_code") or "").strip(),
+            )
+            raw_counts[key] += int(occurrence.get("count") or 0)
+            affected_users.setdefault(key, set()).add(row.user_id)
+
+    if not raw_counts:
+        return [("None", "None", "None", 0, 0)]
+
+    def _sort_key(item: tuple[tuple[str, str, str], int]) -> tuple[int, int, str, str, str]:
+        key, count = item
+        return (-count, -len(affected_users.get(key, set())), key[0], key[1], key[2])
+
+    ranked_rows: list[tuple[str, str, str, int, int]] = []
+    for key, count in sorted(raw_counts.items(), key=_sort_key):
+        event_name, endpoint_url, status_code = key
+        ranked_rows.append(
+            (
+                event_name or "None",
+                endpoint_url or "(missing)",
+                status_code or "(missing)",
+                count,
+                len(affected_users.get(key, set())),
+            )
+        )
+    return ranked_rows
 
 
 def _build_key_findings(

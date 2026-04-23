@@ -141,9 +141,11 @@ Key behaviors:
 - activation detection
 - `error_events`
 - `error_endpoint_urls`
+- `error_status_codes`
 - `permission_events`
 - `blocking_schedule_highest_stage`
 - `last_blocking_schedule_event`
+- `error_event_occurrences`
 - top event counts
 - a trimmed timeline excerpt
 - the final `llm_payload`
@@ -154,6 +156,7 @@ The mapper is where the non-LLM logic lives:
 - activation detection via `ACTIVATION_EVENTS`
 - backend tracing via `ERROR_EVENTS`
 - error endpoint extraction via the `endpoint_url` event property on `backend-errored-out` and `network-error`
+- error status-code extraction via the `status_code` event property on error events where it exists
 - blocking-schedule deepest-stage derivation from the `blocking-schedule-*` event family
 - permission signal extraction via `PERMISSION_PATTERNS`
 
@@ -196,10 +199,12 @@ Current workbook behavior:
 - summary worksheet name is `Summary`
 - timestamps are converted to Australia/Melbourne display values at export time
 - workbook includes a dedicated `Error Events` column
-- workbook includes `Error Endpoint URLs` and `Blocking Schedule Highest Stage` detail columns
+- workbook includes `Error Endpoint URLs`, `Error Status Codes`, and `Blocking Schedule Highest Stage` detail columns
 - dropoff points are normalized to canonical stage labels before export and summary counting
 - summary sheet includes error endpoints ranked by affected users
+- summary sheet includes error status codes ranked by affected users
 - summary sheet includes blocking-schedule deepest-stage counts
+- summary sheet includes a `PostHog Insight Parity` section built from raw `backend-errored-out` and `network-error` event tuples
 - header, striping, category colors, and YES/NO status coloring are applied
 
 The exporter is presentation-focused. Internal timestamp storage remains ISO strings until export.

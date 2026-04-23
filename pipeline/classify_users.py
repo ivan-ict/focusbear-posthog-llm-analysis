@@ -23,7 +23,9 @@ class ClassifiedJourney:
     dropoff_point: str
     error_events: list[str]
     error_endpoint_urls: list[str]
+    error_status_codes: list[str]
     blocking_schedule_highest_stage: str
+    error_event_occurrences: list[dict[str, Any]]
     notes: str
     activated: bool
     pre_onboarding: str
@@ -78,7 +80,9 @@ def _normalize_response(journey: MappedJourney, response: dict[str, Any]) -> Cla
         dropoff_point=dropoff_point,
         error_events=journey.error_events,
         error_endpoint_urls=journey.error_endpoint_urls,
+        error_status_codes=journey.error_status_codes,
         blocking_schedule_highest_stage=journey.blocking_schedule_highest_stage,
+        error_event_occurrences=journey.error_event_occurrences,
         notes=notes,
         activated=activated,
         pre_onboarding=stage_values["pre_onboarding"],
@@ -127,7 +131,9 @@ def _fallback_classification(journey: MappedJourney, error_message: str) -> Clas
         dropoff_point=highest_stage,
         error_events=journey.error_events,
         error_endpoint_urls=journey.error_endpoint_urls,
+        error_status_codes=journey.error_status_codes,
         blocking_schedule_highest_stage=journey.blocking_schedule_highest_stage,
+        error_event_occurrences=journey.error_event_occurrences,
         notes=notes,
         activated=journey.activation_detected,
         pre_onboarding=_yes_no(journey.stage_flags.get("pre_onboarding", False)),

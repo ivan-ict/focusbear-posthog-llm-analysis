@@ -4,3 +4,4 @@ __pycache__/
 data/raw/*.json
 data/processed/*.json
 data/outputs/onboarding_analysis.xlsx
+.DS_Store

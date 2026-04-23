@@ -6,7 +6,7 @@ This project analyzes Focus Bear mobile onboarding journeys for a PostHog cohort
 
 - fetches up to `POSTHOG_USER_LIMIT` users from a PostHog cohort
 - fetches and sorts each user’s event timeline
-- derives deterministic rule hints such as stages reached, permission events, backend error events, error endpoint URLs, and blocking-schedule deepest stage
+- derives deterministic rule hints such as stages reached, permission events, backend error events, error endpoint URLs, error status codes, and blocking-schedule deepest stage
 - sends a structured per-user payload to OpenAI for classification
 - exports a workbook at `data/outputs/onboarding_analysis.xlsx` with detail and summary sheets
 
@@ -103,6 +103,7 @@ Live mode also calls OpenAI for each analyzed user, so it depends on working net
 - `data/raw/`: raw cohort payloads and per-user event timelines
 - `data/processed/`: per-user structured payloads sent to the model
 - `data/outputs/onboarding_analysis.xlsx`: final business-review workbook
+- `data/outputs/~$onboarding_analysis.xlsx`: Excel temp/lock file when the workbook is open, not the real analysis output
 
 The workbook currently:
 
@@ -110,9 +111,10 @@ The workbook currently:
 - writes a summary worksheet named `Summary`
 - displays `First App Opened At` and `Last Event At` in Australia/Melbourne time using `DD/MM/YYYY HH:mm`
 - includes a dedicated `Error Events` column for backend-issue rows
-- includes `Error Endpoint URLs` and `Blocking Schedule Highest Stage` columns on the detail sheet
+- includes `Error Endpoint URLs`, `Error Status Codes`, and `Blocking Schedule Highest Stage` columns on the detail sheet
 - normalizes `Dropoff Point` values to consistent stage labels before export
-- summarizes error endpoints by affected users and blocking-schedule deepest stage on the summary sheet
+- summarizes error endpoints by affected users, error status codes, and blocking-schedule deepest stage on the summary sheet
+- includes a `PostHog Insight Parity` summary section built from raw `backend-errored-out` and `network-error` events
 - uses a dark header, alternating row striping, category highlighting, and red/green YES/NO status cells
 
 ## Test
@@ -127,7 +129,7 @@ The existing tests cover:
 
 - config defaulting `POSTHOG_USER_LIMIT` to `100`
 - classification propagation of `error_events`
-- classification propagation of `error_endpoint_urls` and `blocking_schedule_highest_stage`
+- classification propagation of `error_endpoint_urls`, `error_status_codes`, and `blocking_schedule_highest_stage`
 - fallback classification behavior
 - dropoff point normalization across label variants
 - workbook headers, formatting, colors, localized datetime export, mapper drilldowns, and summary-sheet output
@@ -138,12 +140,12 @@ The existing tests cover:
 - `unauthorized` from PostHog: confirm `POSTHOG_API_KEY` is a personal/private Bearer key, not an ingestion key.
 - DNS or connection errors in live mode: verify network access and that `POSTHOG_BASE_URL` is reachable from your environment.
 - `Read timed out` from PostHog during live event fetches: retry the run once before changing code or configuration; transient event-read stalls can happen in live mode.
-- Workbook does not refresh or Excel warns about the file being locked: close `data/outputs/onboarding_analysis.xlsx` first. If Excel is fully closed and `data/outputs/~$onboarding_analysis.xlsx` is still present, treat it as a stale temp lock file and remove only that `~$` file.
+- Workbook does not refresh or Excel warns about the file being locked: compare against `data/outputs/onboarding_analysis.xlsx`, not `data/outputs/~$onboarding_analysis.xlsx`. Close the real workbook first. If Excel is fully closed and the `~$` file is still present, treat it as a stale temp lock file and remove only that `~$` file.
 - Empty or partial workbook output: check `data/raw/` and `data/processed/` first; those files are the fastest way to see whether the issue was in fetch, mapping, or classification.
 - Invalid model output: the OpenAI client retries once with a stricter repair prompt before fallback classification logic is used.
 
 ## Additional Docs
 
-- [Changelog](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/CHANGELOG.md)
-- [Architecture Notes](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/docs/architecture.md) with Mermaid system-flow and artifact-flow diagrams
-- [Handover Guide](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/docs/handover.md)
+- [Changelog](CHANGELOG.md)
+- [Architecture Notes](docs/architecture.md) with Mermaid system-flow and artifact-flow diagrams
+- [Handover Guide](docs/handover.md)

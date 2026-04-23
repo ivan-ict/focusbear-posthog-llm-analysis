@@ -6,9 +6,9 @@ This document is for the next maintainer of the Focus Bear cohort prototype. Use
 
 ## First-Day Checklist
 
-- Read [README.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/README.md) for setup and run commands.
-- Read [CHANGELOG.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/CHANGELOG.md) for recent project changes.
-- Read [architecture.md](/Users/ivan/Documents/003-swinburne-dev/003-2025-S3/ICT80004/focusbear-posthog-llm-analysis/docs/architecture.md) to understand the runtime flow.
+- Read [README.md](../README.md) for setup and run commands.
+- Read [CHANGELOG.md](../CHANGELOG.md) for recent project changes.
+- Read [architecture.md](architecture.md) to understand the runtime flow.
 - Create your own local `.env` from `.env.example`.
 - Verify mock mode first with `POSTHOG_USE_MOCK=true`.
 - Run `.venv/bin/python -m unittest discover`.
@@ -75,6 +75,7 @@ Before a live run, check:
 - the lookback window is large enough for the onboarding period you care about
 - the user limit is intentionally set
 - `data/outputs/onboarding_analysis.xlsx` is not open in Excel or another spreadsheet app
+- compare analysis results against `data/outputs/onboarding_analysis.xlsx`, not `data/outputs/~$onboarding_analysis.xlsx`
 - if `data/outputs/~$onboarding_analysis.xlsx` exists after closing Excel, treat it as a stale temp lock file rather than as the real workbook
 
 Recommended live rerun command:
@@ -127,14 +128,16 @@ Use this sequence when you need to refresh `data/outputs/onboarding_analysis.xls
 
 - For `backend-errored-out` and `network-error`, use a Trends or Events insight filtered to those event names and break down by `endpoint_url`.
 - Use `unique users` as the primary aggregation when you want affected-user counts by failing endpoint.
+- Use `status_code` as a second-level debugging property when the event carries it; missing values are expected for many `network-error` events.
 - For blocking schedule, use the event family `blocking-schedule-*` and classify the deepest stage per user with this precedence:
   - `created`: `blocking-schedule-created`
   - `saved`: `blocking-schedule-save`
   - `configured`: `blocking-schedule-add-new`, `blocking-schedule-select-apps-global`, `blocking-schedule-toggle-global`, `blocking-schedule-remove`
   - `opened`: `blocking-schedule-screen-opened`
 - Match the local workbook logic when comparing results:
-  - workbook detail rows expose `Error Endpoint URLs` and `Blocking Schedule Highest Stage`
-  - workbook summary rows expose `Error Endpoint URL` by affected users and `Blocking Schedule Deepest Stage`
+  - workbook detail rows expose `Error Endpoint URLs`, `Error Status Codes`, and `Blocking Schedule Highest Stage`
+  - workbook summary rows expose `Error Endpoint URL` and `Error Status Code` by affected users, plus `Blocking Schedule Deepest Stage`
+  - workbook summary includes `PostHog Insight Parity`, which is built from raw `backend-errored-out` and `network-error` event tuples
   - workbook excludes `not_reached` from the blocking-schedule deepest-stage summary
 
 ## Debugging Workflow
