@@ -73,10 +73,10 @@ Before a live run, check:
 - the PostHog key is a personal/private Bearer key
 - the cohort ID and project ID are correct
 - the lookback window is large enough for the onboarding period you care about
-- the user limit is intentionally set
+- any temporary user cap is intentionally set; blank `POSTHOG_USER_LIMIT` means full-cohort mode
 - `data/outputs/onboarding_analysis.xlsx` is not open in Excel or another spreadsheet app
-- compare analysis results against `data/outputs/onboarding_analysis.xlsx`, not `data/outputs/~$onboarding_analysis.xlsx`
-- if `data/outputs/~$onboarding_analysis.xlsx` exists after closing Excel, treat it as a stale temp lock file rather than as the real workbook
+- compare analysis results against `data/outputs/onboarding_analysis.xlsx`, not any `data/outputs/~$*` temp file
+- if a `data/outputs/~$*` file exists after closing Excel, treat it as a stale local temp lock file rather than as the real workbook
 
 Recommended live rerun command:
 
@@ -86,9 +86,9 @@ Recommended live rerun command:
 
 ## Common Maintainer Tasks
 
-### Change How Many Users Are Analyzed
+### Temporarily Throttle How Many Users Are Analyzed
 
-Edit `POSTHOG_USER_LIMIT` in `.env`. The repo default is `100` if the variable is unset.
+Leave `POSTHOG_USER_LIMIT` blank for the normal full-cohort run. Set it to a positive integer only when you need a smaller debugging slice.
 
 ### Change the Event Lookback Window
 
@@ -101,6 +101,16 @@ Edit `OPENAI_MODEL` in `.env`.
 ### Change the Output Location
 
 Edit `OUTPUT_XLSX_PATH` in `.env`.
+
+### Generate The Supervisor Report
+
+Use this when the workbook already exists and you do not want another live run:
+
+```bash
+.venv/bin/python generate_supervisor_report.py
+```
+
+The report reads `data/outputs/onboarding_analysis.xlsx` and writes a local DOCX file. It does not call PostHog or OpenAI again.
 
 ### Adjust Stage Or Category Logic
 
@@ -126,9 +136,11 @@ Use this sequence when you need to refresh `data/outputs/onboarding_analysis.xls
 
 ### Recreate The New Drilldowns In PostHog
 
-- For `backend-errored-out` and `network-error`, use a Trends or Events insight filtered to those event names and break down by `endpoint_url`.
-- Use `unique users` as the primary aggregation when you want affected-user counts by failing endpoint.
-- Use `status_code` as a second-level debugging property when the event carries it; missing values are expected for many `network-error` events.
+- For canonical error review, use a Trends or Events insight filtered to `backend-errored-out`, `backend-timed-out`, and `network-error`.
+- Break down by `endpoint_url` and `status_code` when you want the closest equivalent to the workbook `Error Breakdown` table.
+- Use `unique users` for affected-user comparisons and `total` when you want raw event volume.
+- Match the local filter: only `https://api.focusbear.io/` endpoint URLs participate in canonical endpoint-based backend analysis; other hosts should be treated as excluded noise for this workbook.
+- Missing `status_code` values are expected for many `network-error` events.
 - For blocking schedule, use the event family `blocking-schedule-*` and classify the deepest stage per user with this precedence:
   - `created`: `blocking-schedule-created`
   - `saved`: `blocking-schedule-save`
@@ -136,8 +148,8 @@ Use this sequence when you need to refresh `data/outputs/onboarding_analysis.xls
   - `opened`: `blocking-schedule-screen-opened`
 - Match the local workbook logic when comparing results:
   - workbook detail rows expose `Error Endpoint URLs`, `Error Status Codes`, and `Blocking Schedule Highest Stage`
-  - workbook summary rows expose `Error Endpoint URL` and `Error Status Code` by affected users, plus `Blocking Schedule Deepest Stage`
-  - workbook summary includes `PostHog Insight Parity`, which is built from raw `backend-errored-out` and `network-error` event tuples
+  - workbook summary exposes `Error Event Totals`, `Error Breakdown`, and `Blocking Schedule Deepest Stage`
+  - workbook summary charts visualize journey categories, top dropoff points, and canonical error events by affected users
   - workbook excludes `not_reached` from the blocking-schedule deepest-stage summary
 
 ## Debugging Workflow
@@ -157,6 +169,8 @@ This sequence usually tells you whether the problem happened during:
 - LLM classification
 - workbook export
 
+If the workbook is correct but the supervisor report is missing or stale, regenerate the DOCX from the workbook before rerunning the live pipeline.
+
 ## Known Risks And Gaps
 
 - The project is still a prototype and remains tightly scoped to local execution.
@@ -164,6 +178,7 @@ This sequence usually tells you whether the problem happened during:
 - Classification depends on OpenAI responses and external network availability.
 - Live PostHog event fetches can fail transiently on request timeouts; a clean retry may succeed without code changes.
 - The test suite does not cover live PostHog integration or end-to-end classification behavior.
+- Supervisor report generation depends on local `python-docx` and `matplotlib` availability in `.venv`.
 - `codex-requirements.md` is a historical build brief and still contains pre-workbook assumptions such as CSV output.
 
 ## Recommended Future Improvements

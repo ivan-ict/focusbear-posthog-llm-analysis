@@ -10,6 +10,7 @@ The project is a linear local pipeline:
 4. Map events into deterministic onboarding hints.
 5. Classify each journey with OpenAI.
 6. Export a formatted Excel workbook.
+7. Generate an optional supervisor DOCX report from the workbook.
 
 `main.py` orchestrates the full flow and owns the runtime order.
 
@@ -30,6 +31,8 @@ flowchart TD
     OAI["clients/openai_client.py\n+ pipeline/classify_users.py"]
     EXP["pipeline/export_results.py"]
     XLSX["data/outputs/onboarding_analysis.xlsx"]
+    REPORT["pipeline/report_supervisor.py"]
+    DOCX["data/outputs/onboarding_supervisor_report.docx"]
 
     ENV --> MAIN
     MAIN --> MODE
@@ -44,6 +47,8 @@ flowchart TD
     MAP --> OAI
     OAI --> EXP
     EXP --> XLSX
+    XLSX --> REPORT
+    REPORT --> DOCX
 ```
 
 ### Artifact Flow
@@ -56,11 +61,13 @@ flowchart LR
     MAP["map_events"]
     CLASSIFY["classify_users"]
     EXPORT["export_results"]
+    REPORT["report_supervisor"]
 
     RAW1["data/raw/cohort_persons_live.json\n+ cohort_persons_used.json"]
     RAW2["data/raw/user_<id>_events.json"]
     PROC["data/processed/user_<id>_payload.json\n+ sample_user_payload.json"]
     OUT["data/outputs/onboarding_analysis.xlsx"]
+    DOCX["data/outputs/onboarding_supervisor_report.docx"]
 
     FIX --> USERS
     FIX --> EVENTS
@@ -72,6 +79,8 @@ flowchart LR
     MAP --> CLASSIFY
     CLASSIFY --> EXPORT
     EXPORT --> OUT
+    OUT --> REPORT
+    REPORT --> DOCX
 ```
 
 ## Runtime Flow
@@ -83,7 +92,9 @@ flowchart LR
 Important configuration behaviors:
 
 - `POSTHOG_USE_MOCK=true` bypasses live PostHog fetches
+- `POSTHOG_USER_LIMIT` is optional; blank means full-cohort mode
 - `OUTPUT_XLSX_PATH` is normalized to an `.xlsx` path even if a CSV-style name is supplied
+- `OUTPUT_REPORT_PATH` is normalized to a `.docx` path for offline supervisor reporting
 - live mode rejects `POSTHOG_API_KEY` values that look like `phc_...` ingestion keys
 
 ### 2. PostHog Access
@@ -91,14 +102,14 @@ Important configuration behaviors:
 `clients/posthog_client.py` wraps the minimal PostHog HTTP operations used by the project:
 
 - `test_auth()` validates the Bearer key
-- `fetch_cohort_persons(...)` fetches the configured cohort members
+- `fetch_cohort_persons(...)` fetches the configured cohort members, optionally with a caller-provided cap
 - `fetch_events(...)` fetches events for a distinct ID in a bounded time window
 
 This module intentionally isolates PostHog endpoint details so the rest of the pipeline can stay stable if the API contract changes.
 
 ### 3. User Normalization
 
-`pipeline/fetch_users.py` converts raw PostHog persons into `CandidateUser` records.
+`pipeline/fetch_users.py` converts raw PostHog persons into `CandidateUser` records and returns cohort metadata with the normalized user list.
 
 `CandidateUser` contains:
 
@@ -155,8 +166,10 @@ The mapper is where the non-LLM logic lives:
 - wildcard stage matching via `STAGE_PATTERNS`
 - activation detection via `ACTIVATION_EVENTS`
 - backend tracing via `ERROR_EVENTS`
-- error endpoint extraction via the `endpoint_url` event property on `backend-errored-out` and `network-error`
-- error status-code extraction via the `status_code` event property on error events where it exists
+- canonical error-tuple aggregation via `backend-errored-out`, `backend-timed-out`, and `network-error`
+- canonical endpoint-backed errors are restricted to `https://api.focusbear.io/` endpoint URLs
+- error endpoint extraction via the `endpoint_url` event property from canonical error tuples
+- error status-code extraction via the `status_code` event property from canonical error tuples when present
 - blocking-schedule deepest-stage derivation from the `blocking-schedule-*` event family
 - permission signal extraction via `PERMISSION_PATTERNS`
 
@@ -198,16 +211,31 @@ Current workbook behavior:
 - detail worksheet name is `Onboarding Analysis`
 - summary worksheet name is `Summary`
 - timestamps are converted to Australia/Melbourne display values at export time
+- summary sheet includes cohort/run metadata such as cohort ID, cohort name, users available, users analyzed, optional cap, and lookback window
 - workbook includes a dedicated `Error Events` column
 - workbook includes `Error Endpoint URLs`, `Error Status Codes`, and `Blocking Schedule Highest Stage` detail columns
 - dropoff points are normalized to canonical stage labels before export and summary counting
-- summary sheet includes error endpoints ranked by affected users
-- summary sheet includes error status codes ranked by affected users
+- summary sheet includes `Error Event Totals` and an `Error Breakdown` table keyed by `event`, `endpoint_url`, and `status_code`
 - summary sheet includes blocking-schedule deepest-stage counts
-- summary sheet includes a `PostHog Insight Parity` section built from raw `backend-errored-out` and `network-error` event tuples
+- summary sheet includes native Excel charts for journey categories, top dropoff points, and canonical error events by affected users
 - header, striping, category colors, and YES/NO status coloring are applied
 
 The exporter is presentation-focused. Internal timestamp storage remains ISO strings until export.
+
+### 8. Supervisor Report Generation
+
+`pipeline/report_supervisor.py` reads the exported workbook and builds an offline supervisor-facing DOCX report.
+
+Current report behavior:
+
+- input workbook is `data/outputs/onboarding_analysis.xlsx` unless `OUTPUT_XLSX_PATH` overrides it
+- output report is `data/outputs/onboarding_supervisor_report.docx` unless `OUTPUT_REPORT_PATH` overrides it
+- report generation is deterministic and does not call PostHog or OpenAI again
+- narrative sections are derived from workbook aggregates rather than per-user notes
+- embedded charts are rendered locally with `matplotlib`
+- the generated DOCX excludes user IDs, emails, and raw per-user notes by design
+
+`generate_supervisor_report.py` is the standalone entrypoint for this offline step.
 
 ## Key Runtime Models
 
@@ -218,6 +246,10 @@ Loaded in `config.py`, used by every pipeline stage for env-driven behavior and 
 ### `CandidateUser`
 
 Normalized cohort person record produced by `pipeline/fetch_users.py`.
+
+### `FetchedUsers`
+
+Normalized cohort users plus the cohort metadata used in workbook export.
 
 ### `UserTimeline`
 
@@ -230,6 +262,14 @@ Rule-based summary and LLM payload, produced by `pipeline/map_events.py`.
 ### `ClassifiedJourney`
 
 Normalized final row used by the exporter, produced by `pipeline/classify_users.py`.
+
+### `AnalysisMetadata`
+
+Run metadata passed into the exporter so the summary sheet can describe the analyzed cohort and runtime settings.
+
+### `SupervisorReportData`
+
+Aggregate report inputs parsed from the workbook summary and detail sheets, used by `pipeline/report_supervisor.py` to build the supervisor DOCX.
 
 ## Data And Artifact Flow
 
@@ -247,6 +287,13 @@ Used for model inspection:
 
 - per-user OpenAI payloads
 - one sample payload for quick reading
+
+### `data/outputs/`
+
+User-facing generated artifacts:
+
+- `onboarding_analysis.xlsx`
+- `onboarding_supervisor_report.docx`
 
 ### `data/outputs/`
 

@@ -3,5 +3,7 @@ __pycache__/
 *.pyc
 data/raw/*.json
 data/processed/*.json
-data/outputs/onboarding_analysis.xlsx
+data/outputs/*.xlsx
+data/outputs/*.docx
+data/outputs/~$*
 .DS_Store

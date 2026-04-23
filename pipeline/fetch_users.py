@@ -24,7 +24,17 @@ class CandidateUser:
     raw: dict[str, Any]
 
 
-def fetch_candidate_users(config: AppConfig, client: PostHogClient | None) -> list[CandidateUser]:
+@dataclass(slots=True)
+class FetchedUsers:
+    """Normalized cohort users plus cohort metadata for export/debugging."""
+
+    users: list[CandidateUser]
+    cohort_id: str
+    cohort_name: str
+    cohort_total_count: int
+
+
+def fetch_candidate_users(config: AppConfig, client: PostHogClient | None) -> FetchedUsers:
     """Fetch users from the cohort endpoint or local fixtures."""
     if config.posthog_use_mock:
         payload = _load_json(config.fixtures_dir / "cohort_persons.json")
@@ -46,11 +56,16 @@ def fetch_candidate_users(config: AppConfig, client: PostHogClient | None) -> li
             print("Skipping cohort person without a usable distinct ID.", flush=True)
             continue
         normalized_users.append(user)
-        if len(normalized_users) >= config.posthog_user_limit:
+        if config.posthog_user_limit is not None and len(normalized_users) >= config.posthog_user_limit:
             break
 
     _write_json(config.raw_dir / "cohort_persons_used.json", [user.raw for user in normalized_users])
-    return normalized_users
+    return FetchedUsers(
+        users=normalized_users,
+        cohort_id=str(payload.get("id") or config.posthog_cohort_id),
+        cohort_name=str(payload.get("name") or "").strip(),
+        cohort_total_count=int(payload.get("count") or len(normalized_users)),
+    )
 
 
 def _normalize_person(raw_person: dict[str, Any]) -> CandidateUser | None:

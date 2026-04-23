@@ -19,6 +19,16 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _parse_optional_positive_int(value: str | None) -> int | None:
+    """Parse an optional positive integer environment value."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return int(normalized)
+
+
 @dataclass(slots=True)
 class AppConfig:
     """Runtime configuration loaded from a local .env file."""
@@ -29,10 +39,11 @@ class AppConfig:
     posthog_base_url: str
     posthog_project_id: str
     posthog_cohort_id: str
-    posthog_user_limit: int
+    posthog_user_limit: int | None
     posthog_events_lookback_days: int
     posthog_use_mock: bool
     output_xlsx_path: Path
+    output_report_path: Path
     raw_dir: Path
     processed_dir: Path
     outputs_dir: Path
@@ -54,6 +65,13 @@ class AppConfig:
         if not output_path.is_absolute():
             output_path = ROOT_DIR / output_path
 
+        report_path_value = os.getenv("OUTPUT_REPORT_PATH", "data/outputs/onboarding_supervisor_report.docx")
+        report_path = Path(report_path_value)
+        if report_path.suffix.lower() != ".docx":
+            report_path = report_path.with_suffix(".docx")
+        if not report_path.is_absolute():
+            report_path = ROOT_DIR / report_path
+
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip(),
@@ -61,10 +79,11 @@ class AppConfig:
             posthog_base_url=os.getenv("POSTHOG_BASE_URL", "https://us.posthog.com").strip().rstrip("/"),
             posthog_project_id=os.getenv("POSTHOG_PROJECT_ID", "14246").strip(),
             posthog_cohort_id=os.getenv("POSTHOG_COHORT_ID", "239235").strip(),
-            posthog_user_limit=int(os.getenv("POSTHOG_USER_LIMIT", "100")),
+            posthog_user_limit=_parse_optional_positive_int(os.getenv("POSTHOG_USER_LIMIT")),
             posthog_events_lookback_days=int(os.getenv("POSTHOG_EVENTS_LOOKBACK_DAYS", "90")),
             posthog_use_mock=_parse_bool(os.getenv("POSTHOG_USE_MOCK"), default=True),
             output_xlsx_path=output_path,
+            output_report_path=report_path,
             raw_dir=ROOT_DIR / "data" / "raw",
             processed_dir=ROOT_DIR / "data" / "processed",
             outputs_dir=ROOT_DIR / "data" / "outputs",
@@ -97,7 +116,7 @@ class AppConfig:
                 "Live cohort and events reads require a personal/private Bearer API key."
             )
 
-        if self.posthog_user_limit <= 0:
+        if self.posthog_user_limit is not None and self.posthog_user_limit <= 0:
             raise ValueError("POSTHOG_USER_LIMIT must be greater than 0")
         if self.posthog_events_lookback_days <= 0:
             raise ValueError("POSTHOG_EVENTS_LOOKBACK_DAYS must be greater than 0")

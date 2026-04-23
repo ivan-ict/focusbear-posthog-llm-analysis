@@ -26,8 +26,13 @@ class PostHogClient:
         """Call a simple auth endpoint to validate the API key."""
         return self._request_json("GET", "/api/users/@me/")
 
-    def fetch_cohort_persons(self, project_id: str, cohort_id: str, limit: int) -> dict[str, Any]:
-        """Fetch up to the requested number of cohort members."""
+    def fetch_cohort_persons(
+        self,
+        project_id: str,
+        cohort_id: str,
+        limit: int | None,
+    ) -> dict[str, Any]:
+        """Fetch cohort members, optionally truncating to a caller-provided cap."""
         path = f"/api/projects/{project_id}/cohorts/{cohort_id}/persons/"
         params = {"format": "json"}
 
@@ -36,7 +41,7 @@ class PostHogClient:
         first_request = True
         last_page: dict[str, Any] = {}
 
-        while current_url and len(collected_results) < limit:
+        while current_url and (limit is None or len(collected_results) < limit):
             page = self._request_json("GET", current_url, params=params if first_request else None)
             first_request = False
             last_page = page if isinstance(page, dict) else {"results": page}
@@ -52,7 +57,7 @@ class PostHogClient:
 
         return {
             "count": last_page.get("count", len(collected_results)),
-            "results": collected_results[:limit],
+            "results": collected_results[:limit] if limit is not None else collected_results,
             "next": current_url,
         }
 

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -95,7 +97,20 @@ MIN_TEXT_COLUMN_WIDTH = 24
 SUMMARY_SHEET_TITLE = "Summary"
 
 
-def export_results(rows: list[ClassifiedJourney], output_path: Path) -> Path:
+@dataclass(slots=True)
+class AnalysisMetadata:
+    """Run metadata shown on the summary sheet."""
+
+    cohort_id: str
+    cohort_name: str
+    cohort_total_count: int
+    analyzed_user_count: int
+    posthog_user_limit: int | None
+    lookback_days: int
+    generated_at: datetime
+
+
+def export_results(rows: list[ClassifiedJourney], output_path: Path, metadata: AnalysisMetadata) -> Path:
     """Write the final Excel output."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook = Workbook()
@@ -125,7 +140,7 @@ def export_results(rows: list[ClassifiedJourney], output_path: Path) -> Path:
 
     worksheet.auto_filter.ref = worksheet.dimensions
     _autosize_columns(worksheet)
-    _build_summary_sheet(workbook, rows)
+    _build_summary_sheet(workbook, rows, metadata)
     workbook.save(output_path)
     return output_path
 
@@ -164,60 +179,85 @@ def _build_row_values(row: ClassifiedJourney) -> list[Any]:
     ]
 
 
-def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney]) -> None:
+def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney], metadata: AnalysisMetadata) -> None:
     """Write a deterministic summary sheet for stakeholder review."""
     worksheet = workbook.create_sheet(SUMMARY_SHEET_TITLE)
+    chart_ranges: dict[str, tuple[int, int]] = {}
+    total_rows = len(rows)
+    onboarding_completed = sum(1 for row in rows if row.onboarding_complete == "YES")
+    category_counts = Counter(row.category for row in rows)
+    error_event_totals = _ranked_error_event_totals(rows)
 
     _append_section_header(worksheet, ["Metric", "Value"])
-    onboarding_completed = sum(1 for row in rows if row.onboarding_complete == "YES")
-    worksheet.append(["Total Users Analyzed", len(rows)])
+    worksheet.append(["Generated At", _format_excel_datetime_value(metadata.generated_at.isoformat())])
+    worksheet.append(["Cohort ID", metadata.cohort_id])
+    worksheet.append(["Cohort Name", metadata.cohort_name or "Unknown"])
+    worksheet.append(["Cohort Users Available", metadata.cohort_total_count])
+    worksheet.append(["Users Analyzed", metadata.analyzed_user_count])
+    worksheet.append(["Applied User Limit", _format_user_limit(metadata.posthog_user_limit)])
+    worksheet.append(["Lookback Window (Days)", metadata.lookback_days])
     worksheet.append(["Onboarding Completed", onboarding_completed])
-    worksheet.append(["Onboarding Completed %", _format_percentage(onboarding_completed, len(rows))])
+    worksheet.append(["Onboarding Completed %", _format_percentage(onboarding_completed, total_rows)])
+    _style_summary_metric_values(worksheet)
 
     worksheet.append([])
+    category_header_row = worksheet.max_row + 1
     _append_section_header(worksheet, ["Category", "Count", "Percent"])
-    category_counts = Counter(row.category for row in rows)
     for category in ALLOWED_CATEGORIES:
         count = category_counts.get(category, 0)
-        worksheet.append([category, count, _format_percentage(count, len(rows))])
+        worksheet.append([category, count, _format_percentage(count, total_rows)])
+    chart_ranges["categories"] = (category_header_row, worksheet.max_row)
 
     worksheet.append([])
+    dropoff_header_row = worksheet.max_row + 1
     _append_section_header(worksheet, ["Top Dropoff Point", "Count"])
     for label, count in _ranked_dropoff_counts(rows):
         worksheet.append([label, count])
-
-    worksheet.append([])
-    _append_section_header(worksheet, ["Top Backend Error Event", "Count"])
-    for event_name, count in _ranked_backend_error_counts(rows):
-        worksheet.append([event_name, count])
-
-    worksheet.append([])
-    _append_section_header(worksheet, ["Error Endpoint URL", "Affected Users", "Percent"])
-    for endpoint_url, count in _ranked_error_endpoint_user_counts(rows):
-        worksheet.append([endpoint_url, count, _format_percentage(count, len(rows))])
-
-    worksheet.append([])
-    _append_section_header(worksheet, ["Error Status Code", "Affected Users", "Percent"])
-    for status_code, count in _ranked_error_status_code_user_counts(rows):
-        worksheet.append([status_code, count, _format_percentage(count, len(rows))])
+    chart_ranges["dropoffs"] = (dropoff_header_row, worksheet.max_row)
 
     worksheet.append([])
     _append_section_header(worksheet, ["Blocking Schedule Deepest Stage", "Count", "Percent"])
     for stage_name, count in _ranked_blocking_schedule_highest_stage_counts(rows):
-        worksheet.append([stage_name, count, _format_percentage(count, len(rows))])
+        worksheet.append([stage_name, count, _format_percentage(count, total_rows)])
 
     worksheet.append([])
-    _append_section_header(worksheet, ["PostHog Insight Parity"])
-    worksheet.append(["Event", "Endpoint URL", "Status Code", "Raw Events", "Affected Users"])
+    _append_section_header(worksheet, ["Error Event Totals"])
+    worksheet.append(["Event", "Raw Events", "Affected Users", "Affected Users %"])
     _style_summary_subheader_row(worksheet)
-    for event_name, endpoint_url, status_code, raw_events, affected_users in _ranked_posthog_parity_rows(rows):
-        worksheet.append([event_name, endpoint_url, status_code, raw_events, affected_users])
+    error_totals_header_row = worksheet.max_row
+    for event_name, raw_events, affected_users in error_event_totals:
+        worksheet.append(
+            [
+                event_name,
+                raw_events,
+                affected_users,
+                _format_percentage(affected_users, total_rows),
+            ]
+        )
+    chart_ranges["error_events"] = (error_totals_header_row, worksheet.max_row)
+
+    worksheet.append([])
+    _append_section_header(worksheet, ["Error Breakdown"])
+    worksheet.append(["Event", "Endpoint URL", "Status Code", "Raw Events", "Affected Users", "Affected Users %"])
+    _style_summary_subheader_row(worksheet)
+    for event_name, endpoint_url, status_code, raw_events, affected_users in _ranked_error_breakdown_rows(rows):
+        worksheet.append(
+            [
+                event_name,
+                endpoint_url,
+                status_code,
+                raw_events,
+                affected_users,
+                _format_percentage(affected_users, total_rows),
+            ]
+        )
 
     worksheet.append([])
     _append_section_header(worksheet, ["Key Finding"])
     for finding in _build_key_findings(rows, category_counts):
         worksheet.append([finding])
 
+    _add_summary_charts(worksheet, chart_ranges)
     _autosize_columns(worksheet)
 
 
@@ -240,48 +280,22 @@ def _style_summary_subheader_row(worksheet: Worksheet) -> None:
         cell.alignment = CENTER_ALIGNMENT
 
 
+def _style_summary_metric_values(worksheet: Worksheet) -> None:
+    """Apply consistent alignment/formatting to metric values."""
+    for row_index in range(2, worksheet.max_row + 1):
+        label_cell = worksheet.cell(row=row_index, column=1)
+        value_cell = worksheet.cell(row=row_index, column=2)
+        if not str(label_cell.value or "").strip():
+            continue
+        if isinstance(value_cell.value, datetime):
+            value_cell.number_format = EXCEL_DATETIME_FORMAT
+        value_cell.alignment = WRAP_ALIGNMENT
+
+
 def _ranked_dropoff_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
     """Return dropoff counts sorted by frequency, excluding unknown values."""
     counts = Counter(normalize_dropoff_point(row.dropoff_point) for row in rows)
     counts.pop("Unknown", None)
-    if not counts:
-        return [("None", 0)]
-    return counts.most_common()
-
-
-def _ranked_backend_error_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
-    """Return backend error event counts ranked by frequency."""
-    counts: Counter[str] = Counter()
-    for row in rows:
-        if row.category != "Backend issue":
-            continue
-        for error_event in row.error_events:
-            counts[error_event] += 1
-
-    if not counts:
-        return [("None", 0)]
-    return counts.most_common()
-
-
-def _ranked_error_endpoint_user_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
-    """Return error endpoint URL counts ranked by affected users."""
-    counts: Counter[str] = Counter()
-    for row in rows:
-        for endpoint_url in row.error_endpoint_urls:
-            counts[endpoint_url] += 1
-
-    if not counts:
-        return [("None", 0)]
-    return counts.most_common()
-
-
-def _ranked_error_status_code_user_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
-    """Return error status-code counts ranked by affected users."""
-    counts: Counter[str] = Counter()
-    for row in rows:
-        for status_code in row.error_status_codes:
-            counts[status_code] += 1
-
     if not counts:
         return [("None", 0)]
     return counts.most_common()
@@ -298,10 +312,58 @@ def _ranked_blocking_schedule_highest_stage_counts(
     return counts.most_common()
 
 
-def _ranked_posthog_parity_rows(
+def _ranked_error_event_totals(rows: list[ClassifiedJourney]) -> list[tuple[str, int, int]]:
+    """Return canonical error events ranked by affected users and raw count."""
+    raw_counts, affected_users = _aggregate_error_breakdown(rows)
+    event_rows: list[tuple[str, int, int]] = []
+    by_event: dict[str, tuple[int, set[str]]] = {}
+    for (event_name, _endpoint_url, _status_code), raw_count in raw_counts.items():
+        current_raw, current_users = by_event.get(event_name, (0, set()))
+        current_users = set(current_users)
+        current_raw += raw_count
+        current_users.update(affected_users.get((event_name, _endpoint_url, _status_code), set()))
+        by_event[event_name] = (current_raw, current_users)
+
+    for event_name, (raw_count, users) in by_event.items():
+        event_rows.append((event_name, raw_count, len(users)))
+
+    if not event_rows:
+        return [("None", 0, 0)]
+
+    return sorted(event_rows, key=lambda item: (-item[2], -item[1], item[0]))
+
+
+def _ranked_error_breakdown_rows(
     rows: list[ClassifiedJourney],
 ) -> list[tuple[str, str, str, int, int]]:
-    """Return raw error-event rows for parity checks against PostHog insights."""
+    """Return canonical error breakdown rows keyed by event, endpoint, and status."""
+    raw_counts, affected_users = _aggregate_error_breakdown(rows)
+    if not raw_counts:
+        return [("None", "None", "None", 0, 0)]
+
+    def _sort_key(item: tuple[tuple[str, str, str], int]) -> tuple[int, int, str, str, str]:
+        key, raw_count = item
+        return (-len(affected_users.get(key, set())), -raw_count, key[0], key[1], key[2])
+
+    ranked_rows: list[tuple[str, str, str, int, int]] = []
+    for key, raw_count in sorted(raw_counts.items(), key=_sort_key):
+        event_name, endpoint_url, status_code = key
+        ranked_rows.append(
+            (
+                event_name or "None",
+                endpoint_url or "(missing)",
+                status_code or "(missing)",
+                raw_count,
+                len(affected_users.get(key, set())),
+            )
+        )
+    return ranked_rows
+
+
+def _aggregate_error_breakdown(
+    rows: list[ClassifiedJourney],
+) -> tuple[Counter[tuple[str, str, str]], dict[tuple[str, str, str], set[str]]]:
+    """Aggregate canonical error tuples into raw-event and affected-user counts."""
     raw_counts: Counter[tuple[str, str, str]] = Counter()
     affected_users: dict[tuple[str, str, str], set[str]] = {}
     for row in rows:
@@ -313,27 +375,7 @@ def _ranked_posthog_parity_rows(
             )
             raw_counts[key] += int(occurrence.get("count") or 0)
             affected_users.setdefault(key, set()).add(row.user_id)
-
-    if not raw_counts:
-        return [("None", "None", "None", 0, 0)]
-
-    def _sort_key(item: tuple[tuple[str, str, str], int]) -> tuple[int, int, str, str, str]:
-        key, count = item
-        return (-count, -len(affected_users.get(key, set())), key[0], key[1], key[2])
-
-    ranked_rows: list[tuple[str, str, str, int, int]] = []
-    for key, count in sorted(raw_counts.items(), key=_sort_key):
-        event_name, endpoint_url, status_code = key
-        ranked_rows.append(
-            (
-                event_name or "None",
-                endpoint_url or "(missing)",
-                status_code or "(missing)",
-                count,
-                len(affected_users.get(key, set())),
-            )
-        )
-    return ranked_rows
+    return raw_counts, affected_users
 
 
 def _build_key_findings(
@@ -362,17 +404,24 @@ def _build_key_findings(
     else:
         findings.append("No dropoff point could be determined from the analyzed users.")
 
-    top_error_event, top_error_count = _ranked_backend_error_counts(rows)[0]
+    top_error_event, top_error_raw_count, top_error_affected_users = _ranked_error_event_totals(rows)[0]
     if top_error_event != "None":
-        findings.append(f"Most common backend error: {top_error_event} ({top_error_count} occurrences).")
+        findings.append(
+            "Most common canonical error event: "
+            f"{top_error_event} ({top_error_raw_count} raw events across {top_error_affected_users} users)."
+        )
     else:
-        findings.append("No backend error events were recorded in backend-issue rows.")
+        findings.append("No canonical error events were recorded in the analyzed users.")
 
-    top_endpoint_url, top_endpoint_count = _ranked_error_endpoint_user_counts(rows)[0]
-    if top_endpoint_url != "None":
-        findings.append(f"Most affected error endpoint: {top_endpoint_url} ({top_endpoint_count} users).")
+    top_error_breakdown = _ranked_error_breakdown_rows(rows)[0]
+    if top_error_breakdown[0] != "None":
+        findings.append(
+            "Most affected error breakdown: "
+            f"{top_error_breakdown[0]} @ {top_error_breakdown[1]} "
+            f"[{top_error_breakdown[2]}] ({top_error_breakdown[4]} users)."
+        )
     else:
-        findings.append("No error endpoint URLs were recorded in the analyzed users.")
+        findings.append("No error breakdown rows were recorded in the analyzed users.")
 
     top_blocking_stage, top_blocking_stage_count = _ranked_blocking_schedule_highest_stage_counts(rows)[0]
     if top_blocking_stage != "None":
@@ -389,6 +438,87 @@ def _build_key_findings(
         f"({onboarding_completed}/{total_rows})."
     )
     return findings
+
+
+def _add_summary_charts(worksheet: Worksheet, chart_ranges: dict[str, tuple[int, int]]) -> None:
+    """Add a compact set of native Excel charts to the summary sheet."""
+    _add_bar_chart(
+        worksheet,
+        title="Journey Categories",
+        anchor="H2",
+        header_row=chart_ranges["categories"][0],
+        end_row=chart_ranges["categories"][1],
+        category_col=1,
+        value_col=2,
+    )
+    _add_bar_chart(
+        worksheet,
+        title="Top Dropoff Points",
+        anchor="H20",
+        header_row=chart_ranges["dropoffs"][0],
+        end_row=chart_ranges["dropoffs"][1],
+        category_col=1,
+        value_col=2,
+    )
+    _add_bar_chart(
+        worksheet,
+        title="Error Events by Affected Users",
+        anchor="H38",
+        header_row=chart_ranges["error_events"][0],
+        end_row=chart_ranges["error_events"][1],
+        category_col=1,
+        value_col=3,
+    )
+
+
+def _add_bar_chart(
+    worksheet: Worksheet,
+    *,
+    title: str,
+    anchor: str,
+    header_row: int,
+    end_row: int,
+    category_col: int,
+    value_col: int,
+) -> None:
+    """Render a single horizontal bar chart from a summary table."""
+    if end_row <= header_row:
+        return
+
+    chart = BarChart()
+    chart.type = "bar"
+    chart.style = 10
+    chart.title = title
+    chart.y_axis.title = None
+    chart.x_axis.title = None
+    chart.height = 7
+    chart.width = 12
+    chart.legend = None
+
+    data = Reference(
+        worksheet,
+        min_col=value_col,
+        max_col=value_col,
+        min_row=header_row,
+        max_row=end_row,
+    )
+    categories = Reference(
+        worksheet,
+        min_col=category_col,
+        max_col=category_col,
+        min_row=header_row + 1,
+        max_row=end_row,
+    )
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
+    worksheet.add_chart(chart, anchor)
+
+
+def _format_user_limit(limit: int | None) -> str:
+    """Return a stable summary label for the user-limit setting."""
+    if limit is None:
+        return "All cohort users"
+    return str(limit)
 
 
 def _format_percentage(count: int, total: int) -> str:

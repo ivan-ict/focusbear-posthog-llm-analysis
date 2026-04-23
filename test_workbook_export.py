@@ -20,12 +20,13 @@ from pipeline.classify_users import (
     _normalize_response,
     normalize_dropoff_point,
 )
-from pipeline.export_results import EXCEL_DATETIME_FORMAT, export_results
+from pipeline.export_results import AnalysisMetadata, EXCEL_DATETIME_FORMAT, export_results
 from pipeline.map_events import MappedJourney, _map_single_timeline
+from pipeline.report_supervisor import generate_supervisor_report
 
 
 class ConfigTests(unittest.TestCase):
-    def test_load_defaults_to_100_users(self) -> None:
+    def test_load_defaults_to_all_users(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             env_path = Path(tmp_dir) / ".env"
             env_path.write_text("", encoding="utf-8")
@@ -33,7 +34,27 @@ class ConfigTests(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True):
                 config = AppConfig.load(env_path=env_path)
 
-        self.assertEqual(config.posthog_user_limit, 100)
+        self.assertIsNone(config.posthog_user_limit)
+
+    def test_blank_user_limit_loads_as_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text("POSTHOG_USER_LIMIT=\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = AppConfig.load(env_path=env_path)
+
+        self.assertIsNone(config.posthog_user_limit)
+
+    def test_load_defaults_report_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text("", encoding="utf-8")
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = AppConfig.load(env_path=env_path)
+
+        self.assertEqual(config.output_report_path.name, "onboarding_supervisor_report.docx")
 
 
 class ClassificationTests(unittest.TestCase):
@@ -186,7 +207,19 @@ class ExportResultsTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_path = Path(tmp_dir) / "onboarding_analysis.xlsx"
-            export_results(rows, output_path)
+            export_results(
+                rows,
+                output_path,
+                metadata=AnalysisMetadata(
+                    cohort_id="239235",
+                    cohort_name="People who didn't activate",
+                    cohort_total_count=111,
+                    analyzed_user_count=3,
+                    posthog_user_limit=None,
+                    lookback_days=90,
+                    generated_at=datetime(2026, 6, 4, 2, 0, 0),
+                ),
+            )
 
             workbook = load_workbook(output_path)
             worksheet = workbook["Onboarding Analysis"]
@@ -261,38 +294,194 @@ class ExportResultsTests(unittest.TestCase):
             self.assertTrue(_rgb(worksheet["M2"]).endswith("FFC7CE"))
 
             self.assertEqual(summary_sheet["A1"].value, "Metric")
-            self.assertEqual(summary_sheet["B2"].value, 3)
-            self.assertEqual(summary_sheet["B3"].value, 1)
-            self.assertEqual(summary_sheet["B4"].value, "33.3%")
+            self.assertEqual(summary_sheet["A2"].value, "Generated At")
+            self.assertEqual(summary_sheet["B2"].value, datetime(2026, 6, 4, 2, 0))
+            self.assertEqual(summary_sheet["A5"].value, "Cohort Users Available")
+            self.assertEqual(summary_sheet["B5"].value, 111)
+            self.assertEqual(summary_sheet["A6"].value, "Users Analyzed")
+            self.assertEqual(summary_sheet["B6"].value, 3)
+            self.assertEqual(summary_sheet["A7"].value, "Applied User Limit")
+            self.assertEqual(summary_sheet["B7"].value, "All cohort users")
+            self.assertEqual(summary_sheet["A9"].value, "Onboarding Completed")
+            self.assertEqual(summary_sheet["B9"].value, 1)
+            self.assertEqual(summary_sheet["A10"].value, "Onboarding Completed %")
+            self.assertEqual(summary_sheet["B10"].value, "33.3%")
 
             summary_rows = list(summary_sheet.iter_rows(values_only=True))
-            self.assertIn(("Backend issue", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("Permission issue", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("Early drop", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("Set Up Blocking Schedule", 2, None, None, None), summary_rows)
-            self.assertIn(("Routine Generated", 1, None, None, None), summary_rows)
-            self.assertIn(("backend-errored-out", 1, None, None, None), summary_rows)
-            self.assertIn(("network-error", 1, None, None, None), summary_rows)
-            self.assertIn(("https://api.focusbear.io/events", 2, "66.7%", None, None), summary_rows)
-            self.assertIn(("https://api.focusbear.io/blocking-schedules", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("403", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("413", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("400", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("saved", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("configured", 1, "33.3%", None, None), summary_rows)
-            self.assertIn(("backend-errored-out", "https://api.focusbear.io/events", "403", 2, 1), summary_rows)
+            self.assertIn(("Backend issue", 1, "33.3%", None, None, None), summary_rows)
+            self.assertIn(("Permission issue", 1, "33.3%", None, None, None), summary_rows)
+            self.assertIn(("Early drop", 1, "33.3%", None, None, None), summary_rows)
+            self.assertIn(("Set Up Blocking Schedule", 2, None, None, None, None), summary_rows)
+            self.assertIn(("Routine Generated", 1, None, None, None, None), summary_rows)
+            self.assertIn(("saved", 1, "33.3%", None, None, None), summary_rows)
+            self.assertIn(("configured", 1, "33.3%", None, None, None), summary_rows)
+            self.assertIn(("backend-errored-out", 3, 2, "66.7%", None, None), summary_rows)
+            self.assertIn(("network-error", 1, 1, "33.3%", None, None), summary_rows)
             self.assertIn(
-                ("network-error", "https://api.focusbear.io/blocking-schedules", "(missing)", 1, 1),
+                ("backend-errored-out", "https://api.focusbear.io/events", "403", 2, 1, "33.3%"),
                 summary_rows,
             )
+            self.assertIn(
+                ("network-error", "https://api.focusbear.io/blocking-schedules", "(missing)", 1, 1, "33.3%"),
+                summary_rows,
+            )
+            self.assertEqual(len(summary_sheet._charts), 3)
 
             findings = [row[0] for row in summary_rows if row and isinstance(row[0], str)]
             self.assertIn("Largest category: Permission issue (1/3, 33.3%).", findings)
             self.assertIn("Most common dropoff point: Set Up Blocking Schedule (2 users).", findings)
-            self.assertIn("Most common backend error: backend-errored-out (1 occurrences).", findings)
-            self.assertIn("Most affected error endpoint: https://api.focusbear.io/events (2 users).", findings)
+            self.assertIn(
+                "Most common canonical error event: backend-errored-out (3 raw events across 2 users).",
+                findings,
+            )
+            self.assertIn(
+                "Most affected error breakdown: backend-errored-out @ https://api.focusbear.io/events [403] (1 users).",
+                findings,
+            )
             self.assertIn("Most common blocking-schedule deepest stage: saved (1 users).", findings)
             self.assertIn("Onboarding completion rate: 33.3% (1/3).", findings)
+
+    def test_export_results_excludes_non_api_endpoints_from_detail_and_summary(self) -> None:
+        timeline = _build_user_timeline(
+            [
+                _event("user-open-the-app-for-the-first-time", "2026-06-01T00:00:00+00:00"),
+                _event(
+                    "backend-errored-out",
+                    "2026-06-01T00:01:00+00:00",
+                    endpoint_url="https://events.aws.focusbear.io/events",
+                    status_code="403",
+                ),
+                _event(
+                    "network-error",
+                    "2026-06-01T00:02:00+00:00",
+                    endpoint_url="https://api.focusbear.io/events",
+                ),
+            ]
+        )
+        classified_row = _fallback_classification(_map_single_timeline(timeline), "test fallback")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "onboarding_analysis.xlsx"
+            export_results(
+                [classified_row],
+                output_path,
+                metadata=AnalysisMetadata(
+                    cohort_id="239235",
+                    cohort_name="People who didn't activate",
+                    cohort_total_count=1,
+                    analyzed_user_count=1,
+                    posthog_user_limit=None,
+                    lookback_days=90,
+                    generated_at=datetime(2026, 6, 4, 2, 0, 0),
+                ),
+            )
+
+            workbook = load_workbook(output_path)
+            worksheet = workbook["Onboarding Analysis"]
+            summary_sheet = workbook["Summary"]
+
+            self.assertEqual(worksheet["H2"].value, "https://api.focusbear.io/events")
+            self.assertEqual(worksheet["I2"].value, None)
+
+            summary_rows = list(summary_sheet.iter_rows(values_only=True))
+            flattened = [str(value) for row in summary_rows for value in row if value is not None]
+            self.assertFalse(any("events.aws.focusbear.io" in value for value in flattened))
+
+
+class ReportGenerationTests(unittest.TestCase):
+    def test_generate_supervisor_report_from_workbook(self) -> None:
+        rows = [
+            _build_classified_journey(
+                user_id="user-backend",
+                first_app_opened_at="2026-06-01T00:15:00+00:00",
+                last_event_at="2026-06-01T03:45:00+00:00",
+                category="Backend issue",
+                error_events=["backend-errored-out", "network-error"],
+                error_endpoint_urls=[
+                    "https://api.focusbear.io/events",
+                    "https://api.focusbear.io/blocking-schedules",
+                ],
+                error_status_codes=["403", "413"],
+                blocking_schedule_highest_stage="saved",
+                error_event_occurrences=[
+                    {
+                        "event": "backend-errored-out",
+                        "endpoint_url": "https://api.focusbear.io/events",
+                        "status_code": "403",
+                        "count": 2,
+                    },
+                    {
+                        "event": "network-error",
+                        "endpoint_url": "https://api.focusbear.io/blocking-schedules",
+                        "status_code": "",
+                        "count": 1,
+                    },
+                ],
+                notes="Two backend errors observed during onboarding.",
+                pre_onboarding="YES",
+                sign_up="YES",
+                dropoff_point="set_up_blocking_schedule",
+            ),
+            _build_classified_journey(
+                user_id="user-permission",
+                first_app_opened_at="2026-06-02T01:00:00+00:00",
+                last_event_at="2026-06-02T01:30:00+00:00",
+                category="Permission issue",
+                error_events=["backend-errored-out"],
+                error_endpoint_urls=["https://api.focusbear.io/events"],
+                error_status_codes=["400"],
+                blocking_schedule_highest_stage="configured",
+                error_event_occurrences=[
+                    {
+                        "event": "backend-errored-out",
+                        "endpoint_url": "https://api.focusbear.io/events",
+                        "status_code": "400",
+                        "count": 1,
+                    }
+                ],
+                notes="Permission prompt shown repeatedly.",
+                dropoff_point="Set Up Blocking Schedule",
+                onboarding_complete="YES",
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workbook_path = Path(tmp_dir) / "onboarding_analysis.xlsx"
+            report_path = Path(tmp_dir) / "onboarding_supervisor_report.docx"
+            export_results(
+                rows,
+                workbook_path,
+                metadata=AnalysisMetadata(
+                    cohort_id="239235",
+                    cohort_name="People who didn't activate",
+                    cohort_total_count=111,
+                    analyzed_user_count=2,
+                    posthog_user_limit=None,
+                    lookback_days=90,
+                    generated_at=datetime(2026, 6, 4, 2, 0, 0),
+                ),
+            )
+
+            output_path = generate_supervisor_report(workbook_path, report_path)
+
+            from docx import Document
+
+            self.assertEqual(output_path, report_path)
+            self.assertTrue(report_path.exists())
+
+            document = Document(report_path)
+            text = "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
+
+            self.assertIn("Focus Bear Onboarding Analysis Report", text)
+            self.assertIn("Executive Summary", text)
+            self.assertIn("Journey Analysis", text)
+            self.assertIn("Backend / Error Analysis", text)
+            self.assertIn("Recommendations / Next Steps", text)
+            self.assertIn("People who didn't activate", text)
+            self.assertNotIn("user-backend", text)
+            self.assertNotIn("user-permission", text)
+            self.assertNotIn("Two backend errors observed during onboarding.", text)
+            self.assertNotIn("Permission prompt shown repeatedly.", text)
 
 
 class MappingTests(unittest.TestCase):
@@ -322,6 +511,12 @@ class MappingTests(unittest.TestCase):
                     "2026-06-01T00:04:00+00:00",
                     endpoint_url="https://api.focusbear.io/ignored",
                 ),
+                _event(
+                    "backend-errored-out",
+                    "2026-06-01T00:05:00+00:00",
+                    endpoint_url="https://events.aws.focusbear.io/events",
+                    status_code="403",
+                ),
             ]
         )
 
@@ -331,8 +526,9 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(
             journey.error_endpoint_urls,
             [
-                "https://api.focusbear.io/events",
                 "https://api.focusbear.io/blocking-schedules",
+                "https://api.focusbear.io/events",
+                "https://api.focusbear.io/ignored",
             ],
         )
         self.assertEqual(journey.error_status_codes, ["403", "413"])
@@ -352,6 +548,12 @@ class MappingTests(unittest.TestCase):
                     "count": 1,
                 },
                 {
+                    "event": "backend-timed-out",
+                    "endpoint_url": "https://api.focusbear.io/ignored",
+                    "status_code": "",
+                    "count": 1,
+                },
+                {
                     "event": "network-error",
                     "endpoint_url": "https://api.focusbear.io/events",
                     "status_code": "",
@@ -359,6 +561,32 @@ class MappingTests(unittest.TestCase):
                 },
             ],
         )
+
+    def test_map_single_timeline_filters_non_api_endpoints_out_of_error_signals(self) -> None:
+        timeline = _build_user_timeline(
+            [
+                _event("user-open-the-app-for-the-first-time", "2026-06-01T00:00:00+00:00"),
+                _event(
+                    "backend-errored-out",
+                    "2026-06-01T00:01:00+00:00",
+                    endpoint_url="https://events.aws.focusbear.io/events",
+                    status_code="403",
+                ),
+                _event(
+                    "network-error",
+                    "2026-06-01T00:02:00+00:00",
+                    endpoint_url="https://events.aws.focusbear.io/events",
+                ),
+                _event("signin-error", "2026-06-01T00:03:00+00:00"),
+            ]
+        )
+
+        journey = _map_single_timeline(timeline)
+
+        self.assertEqual(journey.error_events, ["signin-error"])
+        self.assertEqual(journey.error_endpoint_urls, [])
+        self.assertEqual(journey.error_status_codes, [])
+        self.assertEqual(journey.error_event_occurrences, [])
 
     def test_map_single_timeline_derives_blocking_schedule_highest_stage(self) -> None:
         cases = [
