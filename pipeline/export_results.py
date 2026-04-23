@@ -24,6 +24,8 @@ OUTPUT_COLUMNS = [
     "Category",
     "Dropoff Point",
     "Error Events",
+    "Error Endpoint URLs",
+    "Blocking Schedule Highest Stage",
     "Notes",
     "Pre Onboarding",
     "Focus Bear Jr Greeting",
@@ -57,9 +59,16 @@ STATUS_COLUMNS = {
 
 CATEGORY_COLUMN = "Category"
 ERROR_EVENTS_COLUMN = "Error Events"
+ERROR_ENDPOINT_URLS_COLUMN = "Error Endpoint URLs"
+BLOCKING_SCHEDULE_HIGHEST_STAGE_COLUMN = "Blocking Schedule Highest Stage"
 NOTES_COLUMN = "Notes"
 DATE_COLUMNS = {"First App Opened At", "Last Event At"}
-WRAP_TEXT_COLUMNS = {ERROR_EVENTS_COLUMN, NOTES_COLUMN}
+WRAP_TEXT_COLUMNS = {
+    ERROR_EVENTS_COLUMN,
+    ERROR_ENDPOINT_URLS_COLUMN,
+    BLOCKING_SCHEDULE_HIGHEST_STAGE_COLUMN,
+    NOTES_COLUMN,
+}
 MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 EXCEL_DATETIME_FORMAT = "DD/MM/YYYY HH:mm"
 
@@ -121,6 +130,7 @@ def export_results(rows: list[ClassifiedJourney], output_path: Path) -> Path:
 def _build_row_values(row: ClassifiedJourney) -> list[Any]:
     """Return export values in the workbook column order."""
     error_events = ", ".join(row.error_events) if row.category == "Backend issue" else ""
+    error_endpoint_urls = ", ".join(row.error_endpoint_urls)
     dropoff_point = normalize_dropoff_point(row.dropoff_point)
     return [
         row.user_id,
@@ -130,6 +140,8 @@ def _build_row_values(row: ClassifiedJourney) -> list[Any]:
         row.category,
         dropoff_point,
         error_events,
+        error_endpoint_urls,
+        row.blocking_schedule_highest_stage,
         row.notes,
         row.pre_onboarding,
         row.focus_bear_jr_greeting,
@@ -175,6 +187,16 @@ def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney]) -> N
         worksheet.append([event_name, count])
 
     worksheet.append([])
+    _append_section_header(worksheet, ["Error Endpoint URL", "Affected Users", "Percent"])
+    for endpoint_url, count in _ranked_error_endpoint_user_counts(rows):
+        worksheet.append([endpoint_url, count, _format_percentage(count, len(rows))])
+
+    worksheet.append([])
+    _append_section_header(worksheet, ["Blocking Schedule Deepest Stage", "Count", "Percent"])
+    for stage_name, count in _ranked_blocking_schedule_highest_stage_counts(rows):
+        worksheet.append([stage_name, count, _format_percentage(count, len(rows))])
+
+    worksheet.append([])
     _append_section_header(worksheet, ["Key Finding"])
     for finding in _build_key_findings(rows, category_counts):
         worksheet.append([finding])
@@ -215,6 +237,29 @@ def _ranked_backend_error_counts(rows: list[ClassifiedJourney]) -> list[tuple[st
     return counts.most_common()
 
 
+def _ranked_error_endpoint_user_counts(rows: list[ClassifiedJourney]) -> list[tuple[str, int]]:
+    """Return error endpoint URL counts ranked by affected users."""
+    counts: Counter[str] = Counter()
+    for row in rows:
+        for endpoint_url in row.error_endpoint_urls:
+            counts[endpoint_url] += 1
+
+    if not counts:
+        return [("None", 0)]
+    return counts.most_common()
+
+
+def _ranked_blocking_schedule_highest_stage_counts(
+    rows: list[ClassifiedJourney],
+) -> list[tuple[str, int]]:
+    """Return deepest blocking-schedule stages ranked by frequency."""
+    counts = Counter(row.blocking_schedule_highest_stage for row in rows)
+    counts.pop("not_reached", None)
+    if not counts:
+        return [("None", 0)]
+    return counts.most_common()
+
+
 def _build_key_findings(
     rows: list[ClassifiedJourney],
     category_counts: Counter[str],
@@ -246,6 +291,21 @@ def _build_key_findings(
         findings.append(f"Most common backend error: {top_error_event} ({top_error_count} occurrences).")
     else:
         findings.append("No backend error events were recorded in backend-issue rows.")
+
+    top_endpoint_url, top_endpoint_count = _ranked_error_endpoint_user_counts(rows)[0]
+    if top_endpoint_url != "None":
+        findings.append(f"Most affected error endpoint: {top_endpoint_url} ({top_endpoint_count} users).")
+    else:
+        findings.append("No error endpoint URLs were recorded in the analyzed users.")
+
+    top_blocking_stage, top_blocking_stage_count = _ranked_blocking_schedule_highest_stage_counts(rows)[0]
+    if top_blocking_stage != "None":
+        findings.append(
+            f"Most common blocking-schedule deepest stage: {top_blocking_stage} "
+            f"({top_blocking_stage_count} users)."
+        )
+    else:
+        findings.append("No users reached blocking schedule in the analyzed users.")
 
     onboarding_completed = sum(1 for row in rows if row.onboarding_complete == "YES")
     findings.append(

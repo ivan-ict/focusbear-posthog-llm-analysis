@@ -140,7 +140,10 @@ Key behaviors:
 - stage flags
 - activation detection
 - `error_events`
+- `error_endpoint_urls`
 - `permission_events`
+- `blocking_schedule_highest_stage`
+- `last_blocking_schedule_event`
 - top event counts
 - a trimmed timeline excerpt
 - the final `llm_payload`
@@ -150,6 +153,8 @@ The mapper is where the non-LLM logic lives:
 - wildcard stage matching via `STAGE_PATTERNS`
 - activation detection via `ACTIVATION_EVENTS`
 - backend tracing via `ERROR_EVENTS`
+- error endpoint extraction via the `endpoint_url` event property on `backend-errored-out` and `network-error`
+- blocking-schedule deepest-stage derivation from the `blocking-schedule-*` event family
 - permission signal extraction via `PERMISSION_PATTERNS`
 
 The mapper writes model-ready payloads to `data/processed/user_<id>_payload.json` and also keeps `sample_user_payload.json` for quick inspection.
@@ -191,7 +196,10 @@ Current workbook behavior:
 - summary worksheet name is `Summary`
 - timestamps are converted to Australia/Melbourne display values at export time
 - workbook includes a dedicated `Error Events` column
+- workbook includes `Error Endpoint URLs` and `Blocking Schedule Highest Stage` detail columns
 - dropoff points are normalized to canonical stage labels before export and summary counting
+- summary sheet includes error endpoints ranked by affected users
+- summary sheet includes blocking-schedule deepest-stage counts
 - header, striping, category colors, and YES/NO status coloring are applied
 
 The exporter is presentation-focused. Internal timestamp storage remains ISO strings until export.
@@ -246,4 +254,5 @@ Used for analyst-facing output:
 - The pipeline is sequential. There is no concurrency control or batching layer.
 - The test suite is small and focused on workbook/classification behavior, not full API integration.
 - Live runs depend on external PostHog and OpenAI availability.
+- Live runs can also fail transiently on slow PostHog event reads because the client uses a bounded request timeout.
 - The repo also contains historical build notes and local credential artifacts that should not be treated as the system design source of truth.

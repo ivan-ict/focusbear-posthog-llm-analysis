@@ -126,6 +126,24 @@ PERMISSION_PATTERNS = [
     "activated-permission-*",
 ]
 
+ERROR_ENDPOINT_PROPERTY = "endpoint_url"
+BLOCKING_SCHEDULE_STAGE_RANKS = {
+    "not_reached": 0,
+    "opened": 1,
+    "configured": 2,
+    "saved": 3,
+    "created": 4,
+}
+BLOCKING_SCHEDULE_EVENT_STAGES = {
+    "blocking-schedule-screen-opened": "opened",
+    "blocking-schedule-add-new": "configured",
+    "blocking-schedule-select-apps-global": "configured",
+    "blocking-schedule-toggle-global": "configured",
+    "blocking-schedule-remove": "configured",
+    "blocking-schedule-save": "saved",
+    "blocking-schedule-created": "created",
+}
+
 
 @dataclass(slots=True)
 class MappedJourney:
@@ -140,7 +158,10 @@ class MappedJourney:
     stage_flags: dict[str, bool]
     activation_detected: bool
     error_events: list[str]
+    error_endpoint_urls: list[str]
     permission_events: list[str]
+    blocking_schedule_highest_stage: str
+    last_blocking_schedule_event: str
     top_event_counts: list[dict[str, Any]]
     timeline_excerpt: list[dict[str, Any]]
     llm_payload: dict[str, Any]
@@ -185,9 +206,12 @@ def _map_single_timeline(timeline: UserTimeline) -> MappedJourney:
         stage_flags["onboarding_complete"] = True
 
     error_events = sorted({name for name in event_names if name in ERROR_EVENTS})
+    error_endpoint_urls = _error_endpoint_urls(timeline.events)
     permission_events = sorted(
         {name for name in event_names if any(_matches_pattern(name, pattern) for pattern in PERMISSION_PATTERNS)}
     )
+    blocking_schedule_highest_stage = _blocking_schedule_highest_stage(timeline.events)
+    last_blocking_schedule_event = _last_blocking_schedule_event(timeline.events)
 
     event_counter = Counter(event_names)
     top_event_counts = [
@@ -209,7 +233,10 @@ def _map_single_timeline(timeline: UserTimeline) -> MappedJourney:
             "highest_reached_stage": highest_stage,
             "activation_detected": activation_detected,
             "error_events": error_events,
+            "error_endpoint_urls": error_endpoint_urls,
             "permission_events": permission_events,
+            "blocking_schedule_highest_stage": blocking_schedule_highest_stage,
+            "last_blocking_schedule_event": last_blocking_schedule_event,
             "raw_event_count": len(timeline.events),
         },
         "event_name_counts": top_event_counts,
@@ -227,7 +254,10 @@ def _map_single_timeline(timeline: UserTimeline) -> MappedJourney:
         stage_flags=stage_flags,
         activation_detected=activation_detected,
         error_events=error_events,
+        error_endpoint_urls=error_endpoint_urls,
         permission_events=permission_events,
+        blocking_schedule_highest_stage=blocking_schedule_highest_stage,
+        last_blocking_schedule_event=last_blocking_schedule_event,
         top_event_counts=top_event_counts,
         timeline_excerpt=_timeline_excerpt(timeline.events),
         llm_payload=llm_payload,
@@ -254,6 +284,47 @@ def _compact_properties(properties: dict[str, Any], max_keys: int = 5) -> dict[s
     for key in sorted(properties.keys())[:max_keys]:
         compact[key] = properties[key]
     return compact
+
+
+def _error_endpoint_urls(events: list[dict[str, Any]]) -> list[str]:
+    """Return stable unique endpoint URLs attached to error events."""
+    urls: list[str] = []
+    seen: set[str] = set()
+    for event in events:
+        event_name = _event_name(event)
+        if event_name not in {"backend-errored-out", "network-error"}:
+            continue
+        properties = event.get("properties") or {}
+        endpoint_url = str(properties.get(ERROR_ENDPOINT_PROPERTY) or "").strip()
+        if not endpoint_url or endpoint_url in seen:
+            continue
+        seen.add(endpoint_url)
+        urls.append(endpoint_url)
+    return urls
+
+
+def _blocking_schedule_highest_stage(events: list[dict[str, Any]]) -> str:
+    """Return the furthest blocking-schedule stage reached in the timeline."""
+    highest_stage = "not_reached"
+    highest_rank = BLOCKING_SCHEDULE_STAGE_RANKS[highest_stage]
+    for event in events:
+        stage = BLOCKING_SCHEDULE_EVENT_STAGES.get(_event_name(event))
+        if stage is None:
+            continue
+        stage_rank = BLOCKING_SCHEDULE_STAGE_RANKS[stage]
+        if stage_rank > highest_rank:
+            highest_stage = stage
+            highest_rank = stage_rank
+    return highest_stage
+
+
+def _last_blocking_schedule_event(events: list[dict[str, Any]]) -> str:
+    """Return the final blocking-schedule event name in the sorted timeline."""
+    for event in reversed(events):
+        event_name = _event_name(event)
+        if event_name in BLOCKING_SCHEDULE_EVENT_STAGES:
+            return event_name
+    return ""
 
 
 def _event_name(event: dict[str, Any]) -> str:

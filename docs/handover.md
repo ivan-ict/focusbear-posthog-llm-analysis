@@ -74,6 +74,14 @@ Before a live run, check:
 - the cohort ID and project ID are correct
 - the lookback window is large enough for the onboarding period you care about
 - the user limit is intentionally set
+- `data/outputs/onboarding_analysis.xlsx` is not open in Excel or another spreadsheet app
+- if `data/outputs/~$onboarding_analysis.xlsx` exists after closing Excel, treat it as a stale temp lock file rather than as the real workbook
+
+Recommended live rerun command:
+
+```bash
+.venv/bin/python main.py
+```
 
 ## Common Maintainer Tasks
 
@@ -105,6 +113,30 @@ Start in:
 
 Start in `pipeline/export_results.py`.
 
+### Rerun The Live Workbook
+
+Use this sequence when you need to refresh `data/outputs/onboarding_analysis.xlsx`:
+
+1. Confirm `.env` is set for live mode and points to the intended cohort.
+2. Close the workbook in Excel before rerunning.
+3. Use `.venv/bin/python main.py`, not the system Python interpreter.
+4. If the run fails on a transient PostHog event-read timeout, retry once before changing code.
+5. After completion, verify the workbook timestamp changed and the detail plus summary sheets refreshed.
+
+### Recreate The New Drilldowns In PostHog
+
+- For `backend-errored-out` and `network-error`, use a Trends or Events insight filtered to those event names and break down by `endpoint_url`.
+- Use `unique users` as the primary aggregation when you want affected-user counts by failing endpoint.
+- For blocking schedule, use the event family `blocking-schedule-*` and classify the deepest stage per user with this precedence:
+  - `created`: `blocking-schedule-created`
+  - `saved`: `blocking-schedule-save`
+  - `configured`: `blocking-schedule-add-new`, `blocking-schedule-select-apps-global`, `blocking-schedule-toggle-global`, `blocking-schedule-remove`
+  - `opened`: `blocking-schedule-screen-opened`
+- Match the local workbook logic when comparing results:
+  - workbook detail rows expose `Error Endpoint URLs` and `Blocking Schedule Highest Stage`
+  - workbook summary rows expose `Error Endpoint URL` by affected users and `Blocking Schedule Deepest Stage`
+  - workbook excludes `not_reached` from the blocking-schedule deepest-stage summary
+
 ## Debugging Workflow
 
 When a run looks wrong, inspect artifacts in this order:
@@ -127,6 +159,7 @@ This sequence usually tells you whether the problem happened during:
 - The project is still a prototype and remains tightly scoped to local execution.
 - There is no database, job queue, API service, or deployment model.
 - Classification depends on OpenAI responses and external network availability.
+- Live PostHog event fetches can fail transiently on request timeouts; a clean retry may succeed without code changes.
 - The test suite does not cover live PostHog integration or end-to-end classification behavior.
 - `codex-requirements.md` is a historical build brief and still contains pre-workbook assumptions such as CSV output.
 
