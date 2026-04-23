@@ -42,7 +42,7 @@ python3 -m venv .venv
 2. Install dependencies:
 
 ```bash
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
 3. Create a local `.env` from the example:
@@ -112,8 +112,8 @@ Live mode also calls OpenAI for each analyzed user, so it depends on working net
 
 - `data/raw/`: raw cohort payloads and per-user event timelines
 - `data/processed/`: per-user structured payloads sent to the model
-- `data/outputs/onboarding_analysis.xlsx`: final business-review workbook
-- `data/outputs/onboarding_supervisor_report.docx`: aggregate-only supervisor report generated from the workbook
+- `data/outputs/onboarding_analysis.xlsx`: final business-review workbook, generated locally and ignored by git
+- `data/outputs/onboarding_supervisor_report.docx`: aggregate-only supervisor report generated from the workbook, generated locally and ignored by git
 - `data/outputs/~$*`: local Excel temp/lock files when the workbook is open, not real analysis output, never tracked
 
 The workbook currently:
@@ -136,7 +136,7 @@ The supervisor report currently:
 - reads the local workbook instead of calling PostHog or OpenAI again
 - writes a DOCX file with headings, narrative findings, aggregate tables, and embedded charts
 - excludes user IDs, emails, and raw per-user notes
-- stays local and is ignored from git
+- stays local and is ignored by git
 
 ## Test
 

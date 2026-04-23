@@ -19,6 +19,7 @@ It is not a log of individual live analysis runs or workbook results.
 - Removed the accidentally tracked Excel temp lock file `data/outputs/~$onboarding_analysis.xlsx` from the repo and ignored future `data/outputs/~$*` artifacts.
 - Clarified in maintainer docs that Excel `~$` files are local troubleshooting artifacts only and should never be committed.
 - Restricted canonical endpoint-based backend analysis to `https://api.focusbear.io/` and filtered out other hosts such as `https://events.aws.focusbear.io/` from journey and summary analysis.
+- Refreshed README, architecture notes, and handover guidance so setup commands, output-artifact privacy, and offline report generation instructions match the current implementation.
 
 ## 2026-04-23
 

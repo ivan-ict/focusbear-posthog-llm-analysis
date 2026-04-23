@@ -22,7 +22,7 @@ Recommended setup sequence:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
 .venv/bin/python -m unittest discover
 ```
@@ -111,6 +111,7 @@ Use this when the workbook already exists and you do not want another live run:
 ```
 
 The report reads `data/outputs/onboarding_analysis.xlsx` and writes a local DOCX file. It does not call PostHog or OpenAI again.
+Both the workbook and the DOCX report are local generated artifacts and are ignored by git.
 
 ### Adjust Stage Or Category Logic
 

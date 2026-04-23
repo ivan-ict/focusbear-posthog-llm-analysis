@@ -234,6 +234,7 @@ Current report behavior:
 - narrative sections are derived from workbook aggregates rather than per-user notes
 - embedded charts are rendered locally with `matplotlib`
 - the generated DOCX excludes user IDs, emails, and raw per-user notes by design
+- generated Excel and DOCX outputs are intended as local artifacts and are ignored by git
 
 `generate_supervisor_report.py` is the standalone entrypoint for this offline step.
 
@@ -292,8 +293,8 @@ Used for model inspection:
 
 User-facing generated artifacts:
 
-- `onboarding_analysis.xlsx`
-- `onboarding_supervisor_report.docx`
+- `onboarding_analysis.xlsx` as the main local workbook artifact
+- `onboarding_supervisor_report.docx` as the aggregate-only local supervisor report
 
 ### `data/outputs/`
 
