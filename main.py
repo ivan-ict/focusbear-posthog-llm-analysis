@@ -21,20 +21,24 @@ def main() -> None:
     config.ensure_directories()
 
     posthog_client = None
-    if config.posthog_use_mock:
-        print("Using mock PostHog mode.", flush=True)
-    else:
+    if config.data_source == "live":
         print("Testing PostHog auth...", flush=True)
         posthog_client = PostHogClient(
             base_url=config.posthog_base_url,
             api_key=config.posthog_api_key,
         )
         posthog_client.test_auth()
+    else:
+        print(f"Using local data source: {config.data_source}.", flush=True)
 
-    openai_client = OpenAIClient(
-        api_key=config.openai_api_key,
-        model=config.openai_model,
-    )
+    openai_client = None
+    if config.classification_source == "openai":
+        openai_client = OpenAIClient(
+            api_key=config.openai_api_key,
+            model=config.openai_model,
+        )
+    else:
+        print(f"Using classification source: {config.classification_source}.", flush=True)
 
     print("Fetching users...", flush=True)
     fetched_users = fetch_candidate_users(config=config, client=posthog_client)
@@ -44,7 +48,7 @@ def main() -> None:
 
     timelines = fetch_user_timelines(config=config, client=posthog_client, users=fetched_users.users)
     mapped_journeys = map_user_timelines(config=config, timelines=timelines)
-    classified_journeys = classify_users(openai_client=openai_client, journeys=mapped_journeys)
+    classified_journeys = classify_users(config=config, journeys=mapped_journeys, openai_client=openai_client)
 
     print("Writing Excel workbook...", flush=True)
     output_path = export_results(

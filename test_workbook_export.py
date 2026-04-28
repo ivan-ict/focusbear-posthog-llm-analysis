@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -17,16 +18,17 @@ from pipeline.fetch_users import CandidateUser
 from pipeline.classify_users import (
     ClassifiedJourney,
     _fallback_classification,
+    _load_classifications_from_workbook,
     _normalize_response,
+    classify_users,
     normalize_dropoff_point,
 )
 from pipeline.export_results import AnalysisMetadata, EXCEL_DATETIME_FORMAT, export_results
 from pipeline.map_events import MappedJourney, _map_single_timeline
-from pipeline.report_supervisor import generate_supervisor_report
 
 
 class ConfigTests(unittest.TestCase):
-    def test_load_defaults_to_all_users(self) -> None:
+    def test_load_defaults_to_local_raw_and_cached(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             env_path = Path(tmp_dir) / ".env"
             env_path.write_text("", encoding="utf-8")
@@ -35,6 +37,8 @@ class ConfigTests(unittest.TestCase):
                 config = AppConfig.load(env_path=env_path)
 
         self.assertIsNone(config.posthog_user_limit)
+        self.assertEqual(config.data_source, "local_raw")
+        self.assertEqual(config.classification_source, "cached")
 
     def test_blank_user_limit_loads_as_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -46,15 +50,16 @@ class ConfigTests(unittest.TestCase):
 
         self.assertIsNone(config.posthog_user_limit)
 
-    def test_load_defaults_report_path(self) -> None:
+    def test_classification_source_openai_requires_openai_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             env_path = Path(tmp_dir) / ".env"
-            env_path.write_text("", encoding="utf-8")
+            env_path.write_text("CLASSIFICATION_SOURCE=openai\n", encoding="utf-8")
 
             with patch.dict(os.environ, {}, clear=True):
                 config = AppConfig.load(env_path=env_path)
 
-        self.assertEqual(config.output_report_path.name, "onboarding_supervisor_report.docx")
+        with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
+            config.validate()
 
 
 class ClassificationTests(unittest.TestCase):
@@ -325,7 +330,7 @@ class ExportResultsTests(unittest.TestCase):
                 ("network-error", "https://api.focusbear.io/blocking-schedules", "(missing)", 1, 1, "33.3%"),
                 summary_rows,
             )
-            self.assertEqual(len(summary_sheet._charts), 3)
+            self.assertEqual(len(summary_sheet._charts), 0)
 
             findings = [row[0] for row in summary_rows if row and isinstance(row[0], str)]
             self.assertIn("Largest category: Permission issue (1/3, 33.3%).", findings)
@@ -388,100 +393,109 @@ class ExportResultsTests(unittest.TestCase):
             self.assertFalse(any("events.aws.focusbear.io" in value for value in flattened))
 
 
-class ReportGenerationTests(unittest.TestCase):
-    def test_generate_supervisor_report_from_workbook(self) -> None:
-        rows = [
-            _build_classified_journey(
-                user_id="user-backend",
-                first_app_opened_at="2026-06-01T00:15:00+00:00",
-                last_event_at="2026-06-01T03:45:00+00:00",
-                category="Backend issue",
-                error_events=["backend-errored-out", "network-error"],
-                error_endpoint_urls=[
-                    "https://api.focusbear.io/events",
-                    "https://api.focusbear.io/blocking-schedules",
-                ],
-                error_status_codes=["403", "413"],
-                blocking_schedule_highest_stage="saved",
-                error_event_occurrences=[
-                    {
-                        "event": "backend-errored-out",
-                        "endpoint_url": "https://api.focusbear.io/events",
-                        "status_code": "403",
-                        "count": 2,
-                    },
-                    {
-                        "event": "network-error",
-                        "endpoint_url": "https://api.focusbear.io/blocking-schedules",
-                        "status_code": "",
-                        "count": 1,
-                    },
-                ],
-                notes="Two backend errors observed during onboarding.",
-                pre_onboarding="YES",
-                sign_up="YES",
-                dropoff_point="set_up_blocking_schedule",
-            ),
-            _build_classified_journey(
-                user_id="user-permission",
-                first_app_opened_at="2026-06-02T01:00:00+00:00",
-                last_event_at="2026-06-02T01:30:00+00:00",
-                category="Permission issue",
-                error_events=["backend-errored-out"],
-                error_endpoint_urls=["https://api.focusbear.io/events"],
-                error_status_codes=["400"],
-                blocking_schedule_highest_stage="configured",
-                error_event_occurrences=[
-                    {
-                        "event": "backend-errored-out",
-                        "endpoint_url": "https://api.focusbear.io/events",
-                        "status_code": "400",
-                        "count": 1,
-                    }
-                ],
-                notes="Permission prompt shown repeatedly.",
-                dropoff_point="Set Up Blocking Schedule",
-                onboarding_complete="YES",
-            ),
-        ]
+class ClassificationCacheTests(unittest.TestCase):
+    def test_classify_users_cached_loads_json_cache(self) -> None:
+        journey = _build_mapped_journey()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "DATA_SOURCE=local_raw",
+                        "CLASSIFICATION_SOURCE=cached",
+                        "OUTPUT_XLSX_PATH=data/outputs/onboarding_analysis.xlsx",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                config = AppConfig.load(env_path=env_path)
+            config.classified_journeys_cache_path = Path(tmp_dir) / "classified_journeys.json"
+
+            cache_payload = [
+                {
+                    "user_id": "user-123",
+                    "category": "Backend issue",
+                    "dropoff_point": "Routine Generated",
+                    "notes": "Cached classification",
+                    "activated": False,
+                    "pre_onboarding": "YES",
+                    "focus_bear_jr_greeting": "YES",
+                    "sign_up": "YES",
+                    "habits_introduction": "NO",
+                    "import_habits": "NO",
+                    "selecting_goals": "NO",
+                    "routine_generated": "NO",
+                    "blocking_intro": "NO",
+                    "screen_time_access": "NO",
+                    "set_up_blocking_schedule": "NO",
+                    "onboarding_complete": "NO",
+                    "home_screen": "NO",
+                }
+            ]
+            config.classified_journeys_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            config.classified_journeys_cache_path.write_text(
+                json.dumps(cache_payload),
+                encoding="utf-8",
+            )
+
+            results = classify_users(config=config, journeys=[journey], openai_client=None)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].notes, "Cached classification")
+        self.assertEqual(results[0].error_events, journey.error_events)
+
+    def test_load_classifications_from_workbook_reuses_workbook_labels(self) -> None:
+        journey = _build_mapped_journey(
+            error_events=["backend-errored-out"],
+            error_endpoint_urls=["https://api.focusbear.io/events"],
+            error_status_codes=["403"],
+            error_event_occurrences=[
+                {
+                    "event": "backend-errored-out",
+                    "endpoint_url": "https://api.focusbear.io/events",
+                    "status_code": "403",
+                    "count": 2,
+                }
+            ],
+        )
+        workbook_row = _build_classified_journey(
+            user_id="user-123",
+            first_app_opened_at="2026-06-01T00:15:00+00:00",
+            last_event_at="2026-06-01T01:15:00+00:00",
+            category="Permission issue",
+            error_events=[],
+            error_endpoint_urls=[],
+            error_status_codes=[],
+            blocking_schedule_highest_stage="not_reached",
+            error_event_occurrences=[],
+            notes="Workbook classification",
+            pre_onboarding="YES",
+            sign_up="YES",
+        )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             workbook_path = Path(tmp_dir) / "onboarding_analysis.xlsx"
-            report_path = Path(tmp_dir) / "onboarding_supervisor_report.docx"
             export_results(
-                rows,
+                [workbook_row],
                 workbook_path,
                 metadata=AnalysisMetadata(
                     cohort_id="239235",
                     cohort_name="People who didn't activate",
-                    cohort_total_count=111,
-                    analyzed_user_count=2,
+                    cohort_total_count=1,
+                    analyzed_user_count=1,
                     posthog_user_limit=None,
                     lookback_days=90,
                     generated_at=datetime(2026, 6, 4, 2, 0, 0),
                 ),
             )
 
-            output_path = generate_supervisor_report(workbook_path, report_path)
+            results = _load_classifications_from_workbook(workbook_path, [journey])
 
-            from docx import Document
-
-            self.assertEqual(output_path, report_path)
-            self.assertTrue(report_path.exists())
-
-            document = Document(report_path)
-            text = "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
-
-            self.assertIn("Focus Bear Onboarding Analysis Report", text)
-            self.assertIn("Executive Summary", text)
-            self.assertIn("Journey Analysis", text)
-            self.assertIn("Backend / Error Analysis", text)
-            self.assertIn("Recommendations / Next Steps", text)
-            self.assertIn("People who didn't activate", text)
-            self.assertNotIn("user-backend", text)
-            self.assertNotIn("user-permission", text)
-            self.assertNotIn("Two backend errors observed during onboarding.", text)
-            self.assertNotIn("Permission prompt shown repeatedly.", text)
+        self.assertEqual(results[0].category, "Permission issue")
+        self.assertEqual(results[0].notes, "Workbook classification")
+        self.assertEqual(results[0].error_event_occurrences, journey.error_event_occurrences)
 
 
 class MappingTests(unittest.TestCase):

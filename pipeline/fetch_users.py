@@ -35,10 +35,14 @@ class FetchedUsers:
 
 
 def fetch_candidate_users(config: AppConfig, client: PostHogClient | None) -> FetchedUsers:
-    """Fetch users from the cohort endpoint or local fixtures."""
-    if config.posthog_use_mock:
+    """Fetch users from local snapshots, fixtures, or the cohort endpoint."""
+    if config.data_source == "fixtures":
         payload = _load_json(config.fixtures_dir / "cohort_persons.json")
-    else:
+        results = payload.get("results", [])
+        cohort_id = str(payload.get("id") or config.posthog_cohort_id)
+        cohort_name = str(payload.get("name") or "").strip()
+        cohort_total_count = int(payload.get("count") or len(results))
+    elif config.data_source == "live":
         if client is None:
             raise ValueError("PostHog client is required in live mode.")
         payload = client.fetch_cohort_persons(
@@ -47,8 +51,17 @@ def fetch_candidate_users(config: AppConfig, client: PostHogClient | None) -> Fe
             limit=config.posthog_user_limit,
         )
         _write_json(config.raw_dir / "cohort_persons_live.json", payload)
+        results = payload.get("results", [])
+        cohort_id = str(payload.get("id") or config.posthog_cohort_id)
+        cohort_name = str(payload.get("name") or "").strip()
+        cohort_total_count = int(payload.get("count") or len(results))
+    else:
+        results = _load_json_list(config.raw_dir / "cohort_persons_used.json")
+        cohort_metadata = _load_optional_json(config.raw_dir / "cohort_persons_live.json") or {}
+        cohort_id = str(cohort_metadata.get("id") or config.posthog_cohort_id)
+        cohort_name = str(cohort_metadata.get("name") or "").strip()
+        cohort_total_count = int(cohort_metadata.get("count") or len(results))
 
-    results = payload.get("results", [])
     normalized_users: list[CandidateUser] = []
     for raw_person in results:
         user = _normalize_person(raw_person)
@@ -62,9 +75,9 @@ def fetch_candidate_users(config: AppConfig, client: PostHogClient | None) -> Fe
     _write_json(config.raw_dir / "cohort_persons_used.json", [user.raw for user in normalized_users])
     return FetchedUsers(
         users=normalized_users,
-        cohort_id=str(payload.get("id") or config.posthog_cohort_id),
-        cohort_name=str(payload.get("name") or "").strip(),
-        cohort_total_count=int(payload.get("count") or len(normalized_users)),
+        cohort_id=cohort_id,
+        cohort_name=cohort_name,
+        cohort_total_count=cohort_total_count,
     )
 
 
@@ -118,6 +131,22 @@ def _load_json(path: Path) -> dict[str, Any]:
     """Load a JSON document from disk."""
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _load_json_list(path: Path) -> list[dict[str, Any]]:
+    """Load a JSON list from disk."""
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, list):
+        raise ValueError(f"Expected a JSON list at {path}")
+    return payload
+
+
+def _load_optional_json(path: Path) -> dict[str, Any] | None:
+    """Load a JSON document when it exists."""
+    if not path.exists():
+        return None
+    return _load_json(path)
 
 
 def _write_json(path: Path, payload: Any) -> None:

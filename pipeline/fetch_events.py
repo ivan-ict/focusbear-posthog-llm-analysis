@@ -26,14 +26,16 @@ def fetch_user_timelines(
     client: PostHogClient | None,
     users: list[CandidateUser],
 ) -> list[UserTimeline]:
-    """Fetch per-user event timelines from PostHog or local fixtures."""
-    if config.posthog_use_mock:
+    """Fetch per-user event timelines from local snapshots, fixtures, or PostHog."""
+    if config.data_source == "fixtures":
         fixture_events = _load_json(config.fixtures_dir / "person_events.json")
         timelines = _load_mock_timelines(config=config, users=users, fixture_events=fixture_events)
-    else:
+    elif config.data_source == "live":
         if client is None:
             raise ValueError("PostHog client is required in live mode.")
         timelines = _load_live_timelines(config=config, client=client, users=users)
+    else:
+        timelines = _load_local_raw_timelines(config=config, users=users)
 
     return timelines
 
@@ -86,6 +88,25 @@ def _load_live_timelines(
     return timelines
 
 
+def _load_local_raw_timelines(
+    config: AppConfig,
+    users: list[CandidateUser],
+) -> list[UserTimeline]:
+    """Load event timelines from existing raw user snapshot files."""
+    timelines: list[UserTimeline] = []
+    for user in users:
+        print(f"Loading cached events for user {user.person_id}...", flush=True)
+        events_path = config.raw_dir / f"user_{user.person_id}_events.json"
+        if not events_path.exists():
+            raise FileNotFoundError(
+                f"Missing local raw events for user {user.person_id}: {events_path}. "
+                "Switch to DATA_SOURCE=live to refresh snapshots."
+            )
+        ordered_events = _sort_events(_dedupe_events(_load_json_list(events_path)))
+        timelines.append(UserTimeline(user=user, events=ordered_events))
+    return timelines
+
+
 def _dedupe_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Deduplicate events by event ID when available."""
     deduped: list[dict[str, Any]] = []
@@ -124,6 +145,15 @@ def _load_json(path: Path) -> dict[str, Any]:
     """Load a JSON document from disk."""
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _load_json_list(path: Path) -> list[dict[str, Any]]:
+    """Load a JSON list from disk."""
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, list):
+        raise ValueError(f"Expected a JSON list at {path}")
+    return payload
 
 
 def _write_json(path: Path, payload: Any) -> None:

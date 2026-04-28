@@ -10,7 +10,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
-from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -182,7 +181,6 @@ def _build_row_values(row: ClassifiedJourney) -> list[Any]:
 def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney], metadata: AnalysisMetadata) -> None:
     """Write a deterministic summary sheet for stakeholder review."""
     worksheet = workbook.create_sheet(SUMMARY_SHEET_TITLE)
-    chart_ranges: dict[str, tuple[int, int]] = {}
     total_rows = len(rows)
     onboarding_completed = sum(1 for row in rows if row.onboarding_complete == "YES")
     category_counts = Counter(row.category for row in rows)
@@ -201,19 +199,15 @@ def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney], meta
     _style_summary_metric_values(worksheet)
 
     worksheet.append([])
-    category_header_row = worksheet.max_row + 1
     _append_section_header(worksheet, ["Category", "Count", "Percent"])
     for category in ALLOWED_CATEGORIES:
         count = category_counts.get(category, 0)
         worksheet.append([category, count, _format_percentage(count, total_rows)])
-    chart_ranges["categories"] = (category_header_row, worksheet.max_row)
 
     worksheet.append([])
-    dropoff_header_row = worksheet.max_row + 1
     _append_section_header(worksheet, ["Top Dropoff Point", "Count"])
     for label, count in _ranked_dropoff_counts(rows):
         worksheet.append([label, count])
-    chart_ranges["dropoffs"] = (dropoff_header_row, worksheet.max_row)
 
     worksheet.append([])
     _append_section_header(worksheet, ["Blocking Schedule Deepest Stage", "Count", "Percent"])
@@ -224,7 +218,6 @@ def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney], meta
     _append_section_header(worksheet, ["Error Event Totals"])
     worksheet.append(["Event", "Raw Events", "Affected Users", "Affected Users %"])
     _style_summary_subheader_row(worksheet)
-    error_totals_header_row = worksheet.max_row
     for event_name, raw_events, affected_users in error_event_totals:
         worksheet.append(
             [
@@ -234,7 +227,6 @@ def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney], meta
                 _format_percentage(affected_users, total_rows),
             ]
         )
-    chart_ranges["error_events"] = (error_totals_header_row, worksheet.max_row)
 
     worksheet.append([])
     _append_section_header(worksheet, ["Error Breakdown"])
@@ -257,7 +249,6 @@ def _build_summary_sheet(workbook: Workbook, rows: list[ClassifiedJourney], meta
     for finding in _build_key_findings(rows, category_counts):
         worksheet.append([finding])
 
-    _add_summary_charts(worksheet, chart_ranges)
     _autosize_columns(worksheet)
 
 
@@ -438,80 +429,6 @@ def _build_key_findings(
         f"({onboarding_completed}/{total_rows})."
     )
     return findings
-
-
-def _add_summary_charts(worksheet: Worksheet, chart_ranges: dict[str, tuple[int, int]]) -> None:
-    """Add a compact set of native Excel charts to the summary sheet."""
-    _add_bar_chart(
-        worksheet,
-        title="Journey Categories",
-        anchor="H2",
-        header_row=chart_ranges["categories"][0],
-        end_row=chart_ranges["categories"][1],
-        category_col=1,
-        value_col=2,
-    )
-    _add_bar_chart(
-        worksheet,
-        title="Top Dropoff Points",
-        anchor="H20",
-        header_row=chart_ranges["dropoffs"][0],
-        end_row=chart_ranges["dropoffs"][1],
-        category_col=1,
-        value_col=2,
-    )
-    _add_bar_chart(
-        worksheet,
-        title="Error Events by Affected Users",
-        anchor="H38",
-        header_row=chart_ranges["error_events"][0],
-        end_row=chart_ranges["error_events"][1],
-        category_col=1,
-        value_col=3,
-    )
-
-
-def _add_bar_chart(
-    worksheet: Worksheet,
-    *,
-    title: str,
-    anchor: str,
-    header_row: int,
-    end_row: int,
-    category_col: int,
-    value_col: int,
-) -> None:
-    """Render a single horizontal bar chart from a summary table."""
-    if end_row <= header_row:
-        return
-
-    chart = BarChart()
-    chart.type = "bar"
-    chart.style = 10
-    chart.title = title
-    chart.y_axis.title = None
-    chart.x_axis.title = None
-    chart.height = 7
-    chart.width = 12
-    chart.legend = None
-
-    data = Reference(
-        worksheet,
-        min_col=value_col,
-        max_col=value_col,
-        min_row=header_row,
-        max_row=end_row,
-    )
-    categories = Reference(
-        worksheet,
-        min_col=category_col,
-        max_col=category_col,
-        min_row=header_row + 1,
-        max_row=end_row,
-    )
-    chart.add_data(data, titles_from_data=True)
-    chart.set_categories(categories)
-    worksheet.add_chart(chart, anchor)
 
 
 def _format_user_limit(limit: int | None) -> str:
