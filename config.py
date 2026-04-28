@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 from pathlib import Path
 import os
 
@@ -10,13 +11,8 @@ from dotenv import load_dotenv
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-
-
-def _parse_bool(value: str | None, default: bool = False) -> bool:
-    """Parse a boolean-like environment value."""
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+DataSource = Literal["local_raw", "fixtures", "live"]
+ClassificationSource = Literal["cached", "openai", "fallback"]
 
 
 def _parse_optional_positive_int(value: str | None) -> int | None:
@@ -41,13 +37,14 @@ class AppConfig:
     posthog_cohort_id: str
     posthog_user_limit: int | None
     posthog_events_lookback_days: int
-    posthog_use_mock: bool
+    data_source: DataSource
+    classification_source: ClassificationSource
     output_xlsx_path: Path
-    output_report_path: Path
     raw_dir: Path
     processed_dir: Path
     outputs_dir: Path
     fixtures_dir: Path
+    classified_journeys_cache_path: Path
 
     @classmethod
     def load(cls, env_path: Path | None = None) -> "AppConfig":
@@ -65,12 +62,13 @@ class AppConfig:
         if not output_path.is_absolute():
             output_path = ROOT_DIR / output_path
 
-        report_path_value = os.getenv("OUTPUT_REPORT_PATH", "data/outputs/onboarding_supervisor_report.docx")
-        report_path = Path(report_path_value)
-        if report_path.suffix.lower() != ".docx":
-            report_path = report_path.with_suffix(".docx")
-        if not report_path.is_absolute():
-            report_path = ROOT_DIR / report_path
+        data_source = str(os.getenv("DATA_SOURCE", "local_raw")).strip().lower()
+        if data_source not in {"local_raw", "fixtures", "live"}:
+            raise ValueError("DATA_SOURCE must be one of: local_raw, fixtures, live")
+
+        classification_source = str(os.getenv("CLASSIFICATION_SOURCE", "cached")).strip().lower()
+        if classification_source not in {"cached", "openai", "fallback"}:
+            raise ValueError("CLASSIFICATION_SOURCE must be one of: cached, openai, fallback")
 
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
@@ -81,24 +79,25 @@ class AppConfig:
             posthog_cohort_id=os.getenv("POSTHOG_COHORT_ID", "239235").strip(),
             posthog_user_limit=_parse_optional_positive_int(os.getenv("POSTHOG_USER_LIMIT")),
             posthog_events_lookback_days=int(os.getenv("POSTHOG_EVENTS_LOOKBACK_DAYS", "90")),
-            posthog_use_mock=_parse_bool(os.getenv("POSTHOG_USE_MOCK"), default=True),
+            data_source=data_source,
+            classification_source=classification_source,
             output_xlsx_path=output_path,
-            output_report_path=report_path,
             raw_dir=ROOT_DIR / "data" / "raw",
             processed_dir=ROOT_DIR / "data" / "processed",
             outputs_dir=ROOT_DIR / "data" / "outputs",
             fixtures_dir=ROOT_DIR / "data" / "raw" / "fixtures",
+            classified_journeys_cache_path=ROOT_DIR / "data" / "processed" / "classified_journeys.json",
         )
 
     def validate(self) -> None:
         """Validate required configuration before the pipeline runs."""
         missing = []
 
-        if not self.openai_api_key:
+        if self.classification_source == "openai" and not self.openai_api_key:
             missing.append("OPENAI_API_KEY")
-        if not self.openai_model:
+        if self.classification_source == "openai" and not self.openai_model:
             missing.append("OPENAI_MODEL")
-        if not self.posthog_use_mock:
+        if self.data_source == "live":
             if not self.posthog_api_key:
                 missing.append("POSTHOG_API_KEY")
             if not self.posthog_project_id:
@@ -110,7 +109,7 @@ class AppConfig:
             missing_text = ", ".join(missing)
             raise ValueError(f"Missing required environment variables: {missing_text}")
 
-        if not self.posthog_use_mock and self.posthog_api_key.startswith("phc_"):
+        if self.data_source == "live" and self.posthog_api_key.startswith("phc_"):
             raise ValueError(
                 "POSTHOG_API_KEY appears to be a PostHog ingestion key (starts with 'phc_'). "
                 "Live cohort and events reads require a personal/private Bearer API key."
